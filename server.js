@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS mercancias(
   id INTEGER PRIMARY KEY, nombre TEXT NOT NULL UNIQUE, codigo TEXT DEFAULT '', unidad TEXT DEFAULT 'kg'
 );
 CREATE TABLE IF NOT EXISTS ubicaciones(
-  id INTEGER PRIMARY KEY, nombre TEXT NOT NULL UNIQUE, tipo TEXT DEFAULT 'Punto de carga', direccion TEXT DEFAULT '', cp TEXT DEFAULT '', ciudad TEXT DEFAULT '', provincia TEXT DEFAULT '', empresa TEXT DEFAULT ''
+  id INTEGER PRIMARY KEY, nombre TEXT NOT NULL, tipo TEXT DEFAULT 'Punto de carga', direccion TEXT DEFAULT '', cp TEXT DEFAULT '', ciudad TEXT DEFAULT '', provincia TEXT DEFAULT '', empresa TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS audit_logs(
   id INTEGER PRIMARY KEY,
@@ -85,6 +85,21 @@ for (const sql of [
   'ALTER TABLE sesiones ADD COLUMN ip TEXT DEFAULT ""',
   'ALTER TABLE sesiones ADD COLUMN creado INTEGER DEFAULT 0',
 ]) { try { db.exec(sql); } catch {} }
+
+// Las ubicaciones pueden repetir nombre (una misma sede puede ser carga y descarga):
+// SQLite no permite quitar UNIQUE con ALTER, así que se reconstruye la tabla antigua.
+try {
+  const sqlUbi = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ubicaciones'").get()?.sql || '';
+  if (/nombre\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(sqlUbi)) {
+    db.exec(`BEGIN;
+      CREATE TABLE ubicaciones_nueva(id INTEGER PRIMARY KEY, nombre TEXT NOT NULL, tipo TEXT DEFAULT 'Punto de carga', direccion TEXT DEFAULT '', cp TEXT DEFAULT '', ciudad TEXT DEFAULT '', provincia TEXT DEFAULT '', empresa TEXT DEFAULT '');
+      INSERT INTO ubicaciones_nueva(id,nombre,tipo,direccion,cp,ciudad,provincia,empresa) SELECT id,nombre,tipo,direccion,cp,ciudad,provincia,empresa FROM ubicaciones;
+      DROP TABLE ubicaciones;
+      ALTER TABLE ubicaciones_nueva RENAME TO ubicaciones;
+      COMMIT;`);
+    console.log('Migración: ubicaciones ya admite nombres repetidos.');
+  }
+} catch (e) { try { db.exec('ROLLBACK'); } catch {} console.error('No se pudo migrar ubicaciones:', e.message); }
 
 // Semilla para directorio de empresas si proviene de versión previa con clientes
 const seed = () => {
@@ -221,7 +236,7 @@ const CAMPOS = {
   deca: [
     ['cliente', 'Cargador contractual', 'cliente'], ['destinatario', 'Destinatario'],
     ['matricula', 'Matrícula del vehículo'], ['remolque', 'Matrícula del remolque'],
-    ['conductor', 'Conductor (nombre y NIF)'], ['origen', 'Lugar de carga'],
+    ['conductor_nombre', 'Conductor (nombre)'], ['conductor_dni', 'Conductor (DNI/NIF)'], ['origen', 'Lugar de carga'],
     ['f_carga', 'Fecha de realización del transporte', 'date'], ['destino', 'Lugar de descarga'],
     ['mercancia', 'Naturaleza de la mercancía'], ['peso', 'Peso (kg)', 'number'],
     ['autorizacion', 'Autorización especial de circulación (si procede)'], ['obs', 'Observaciones'],
@@ -245,13 +260,37 @@ const TITULO = {
 };
 const ESTADOS = ['borrador', 'emitido', 'anulado', 'cerrado'];
 
+// Normaliza documentos antiguos y nuevos a un único formato:
+//  - conductor_nombre / conductor_dni (+ conductor compuesto "Nombre · DNI")
+//  - destinos[] (lista) y destino = primer destino
+const DNI_RE = /^[XYZ]?\d{5,8}[A-Z]$/i;
+const compConductor = (n, i) => [n, i].map(x => String(x || '').trim()).filter(Boolean).join(' · ');
+function normDatos(datos) {
+  const d = { ...datos };
+  if (d.conductor_nombre === undefined && d.conductor_dni === undefined) {
+    const c = String(d.conductor || '').trim();
+    let nom = c, dni = '';
+    const sep = c.split(/\s*[·|]\s*/);
+    if (sep.length > 1) { dni = sep.pop(); nom = sep.join(' · '); }
+    else { const m = c.match(/^(.*?)[\s,(-]+([XYZ]?\d{5,8}[A-Z])\)?$/i); if (m) { nom = m[1]; dni = m[2]; } }
+    d.conductor_nombre = nom.trim(); d.conductor_dni = dni.trim();
+  }
+  d.conductor_nombre = String(d.conductor_nombre || '').trim();
+  d.conductor_dni = String(d.conductor_dni || '').trim().toUpperCase();
+  d.conductor = compConductor(d.conductor_nombre, d.conductor_dni);
+  let dest = Array.isArray(d.destinos) ? d.destinos : (d.destino ? [d.destino] : []);
+  dest = dest.map(x => String(x || '').trim()).filter(Boolean);
+  d.destinos = dest; d.destino = dest[0] || '';
+  return d;
+}
+
 const ajustes = () => JSON.parse(db.prepare('SELECT datos FROM ajustes WHERE id=1').get()?.datos || '{}');
 const num = d => `${d.tipo.toUpperCase()}-${d.creado.slice(0, 4)}-${String(d.id).padStart(5, '0')}`;
 const url = d => `${BASE}/d/${d.token}`;
 const pdfPath = d => path.join(DATA, 'pdf', d.token + '.pdf');
 
 async function generarPdf(d) {
-  const datos = JSON.parse(d.datos), emp = datos._emp || {}, link = url(d), hist = datos._hist || [];
+  const datos = normDatos(JSON.parse(d.datos)), emp = datos._emp || {}, link = url(d), hist = datos._hist || [];
   const qr = await QR.toBuffer(link, { margin: 1, width: 240 });
   const estado = d.estado || 'emitido';
   const p = new PDFDocument({ size: 'A4', margin: 40, info: {
@@ -289,7 +328,10 @@ async function generarPdf(d) {
   h('Datos del servicio');
   // Filtrar campos que ahora se gestionan aparte (contraparte)
   const skipKeys = new Set(['cliente','contraparte_id','contraparte_nombre','contraparte_nif','contraparte_direccion','mi_papel','_emp','_hist']);
-  CAMPOS[d.tipo].filter(([k]) => !skipKeys.has(k)).forEach(([k, l]) => fila(l, datos[k]));
+  CAMPOS[d.tipo].filter(([k]) => !skipKeys.has(k)).forEach(([k, l]) => {
+    if (k === 'destino' && datos.destinos.length > 1) datos.destinos.forEach((x, i) => fila(`${l} ${i + 1} de ${datos.destinos.length}`, x));
+    else fila(l, datos[k]);
+  });
   if (datos.obs_transportista) fila('Observaciones del transportista efectivo', datos.obs_transportista);
   if (d.tipo === 'ecmr') p.moveDown().font('Helvetica-Oblique').fontSize(8).fillColor('#555')
     .text('Este transporte queda sometido al Convenio CMR, cualquiera que sea la cláusula en contrario.');
@@ -811,16 +853,22 @@ app.post('/api/mercancias', need('mercancias'), (req,res)=>{
 app.delete('/api/mercancias/:id', need('mercancias'), (req,res)=>{db.prepare('DELETE FROM mercancias WHERE id=?').run(req.params.id);res.json({ok:1});});
 
 // Ubicaciones frecuentes
+app.get('/api/ubicaciones/sugerencias', (req, res) => {
+  if (!(can(req.u,'ubicaciones') || can(req.u,'deca_crear') || can(req.u,'ecmr_crear'))) return res.status(403).json({error:'No tienes permiso'});
+  res.json(db.prepare('SELECT id,nombre,tipo,direccion,cp,ciudad,provincia,empresa FROM ubicaciones ORDER BY nombre COLLATE NOCASE').all());
+});
 app.get('/api/ubicaciones', need('ubicaciones'), (_,res)=>res.json(db.prepare('SELECT * FROM ubicaciones ORDER BY nombre').all()));
 app.post('/api/ubicaciones', need('ubicaciones'), (req,res)=>{
   const b=req.body||{}, id=Number(b.id)||0, nombre=String(b.nombre||'').trim();
   if(!nombre) return res.status(400).json({error:'El nombre de la ubicación es obligatorio.'});
   try {
     const vals=[nombre,String(b.tipo||'Punto de carga'),String(b.direccion||''),String(b.cp||''),String(b.ciudad||''),String(b.provincia||''),String(b.empresa||'')];
+    const dup=db.prepare('SELECT id FROM ubicaciones WHERE lower(nombre)=lower(?) AND lower(tipo)=lower(?) AND lower(direccion)=lower(?) AND id<>?').get(vals[0],vals[1],vals[2],id);
+    if(dup) return res.status(400).json({error:'Ya existe una ubicación con el mismo nombre, tipo y dirección. Puedes repetir el nombre si cambia el tipo o la dirección.'});
     if(id) db.prepare('UPDATE ubicaciones SET nombre=?,tipo=?,direccion=?,cp=?,ciudad=?,provincia=?,empresa=? WHERE id=?').run(...vals,id);
     else db.prepare('INSERT INTO ubicaciones(nombre,tipo,direccion,cp,ciudad,provincia,empresa) VALUES(?,?,?,?,?,?,?)').run(...vals);
     res.json({ok:1});
-  } catch { res.status(400).json({error:'No se pudo guardar (¿ya existe ese nombre?)'}); }
+  } catch { res.status(400).json({error:'No se pudo guardar la ubicación'}); }
 });
 app.delete('/api/ubicaciones/:id', need('ubicaciones'), (req,res)=>{db.prepare('DELETE FROM ubicaciones WHERE id=?').run(req.params.id);res.json({ok:1});});
 
@@ -830,14 +878,14 @@ app.get('/api/docs', (req,res)=>{
   if (!CAMPOS[tipo] || !(can(req.u,tipo+'_ver') || can(req.u,tipo+'_crear'))) return res.status(403).json({error:'No tienes permiso para ver estos documentos'});
   res.json(db.prepare(`SELECT id,tipo,token,creado,modificado,datos,usuario,COALESCE(estado,'emitido') AS estado
     FROM docs WHERE tipo=? ORDER BY id DESC LIMIT 500`).all(tipo).map(d=>({
-      id:d.id,num:num(d),url:url(d),creado:d.creado,mod:d.modificado,por:d.usuario,estado:d.estado,datos:JSON.parse(d.datos)
+      id:d.id,tipo:d.tipo,num:num(d),url:url(d),creado:d.creado,mod:d.modificado,por:d.usuario,estado:d.estado,datos:normDatos(JSON.parse(d.datos))
   })));
 });
 app.get('/api/docs-todos', (req,res)=>{
   const canSee = can(req.u,'deca_ver')||can(req.u,'deca_crear')||can(req.u,'ecmr_ver')||can(req.u,'ecmr_crear');
   if(!canSee) return res.status(403).json({error:'No tienes permiso para ver documentos'});
   res.json(db.prepare(`SELECT id,tipo,token,creado,modificado,datos,usuario,COALESCE(estado,'emitido') AS estado
-    FROM docs ORDER BY id DESC LIMIT 500`).all().filter(d=>can(req.u,d.tipo+'_ver')||can(req.u,d.tipo+'_crear')).map(d=>({id:d.id,num:num(d),url:url(d),creado:d.creado,mod:d.modificado,por:d.usuario,estado:d.estado,datos:JSON.parse(d.datos)})));
+    FROM docs ORDER BY id DESC LIMIT 500`).all().filter(d=>can(req.u,d.tipo+'_ver')||can(req.u,d.tipo+'_crear')).map(d=>({id:d.id,tipo:d.tipo,num:num(d),url:url(d),creado:d.creado,mod:d.modificado,por:d.usuario,estado:d.estado,datos:normDatos(JSON.parse(d.datos))})));
 });
 
 const faltan = (tipo, datos) => {
@@ -860,7 +908,7 @@ const faltan = (tipo, datos) => {
 app.post('/api/docs', async (req,res)=>{
   try {
     const {tipo,datos:payload={},estado:requestedEstado} = req.body||{};
-    const datos={...payload};
+    const datos=normDatos(payload);
     if(!CAMPOS[tipo]) return res.status(400).json({error:'Tipo de documento no válido'});
     if(!can(req.u,tipo+'_crear')) return res.status(403).json({error:'No tienes permiso para crear este documento'});
 
@@ -898,14 +946,33 @@ app.put('/api/docs/:id', async (req,res)=>{
     const d=db.prepare('SELECT * FROM docs WHERE id=?').get(req.params.id);
     if(!d)return res.status(404).json({error:'Documento no encontrado'});
     if(!can(req.u,d.tipo+'_crear'))return res.status(403).json({error:'No tienes permiso para modificar este documento'});
-    const {motivo='',...nuevo}=req.body||{},datos=JSON.parse(d.datos);
+    const {motivo='',...nuevoRaw}=req.body||{},datos=normDatos(JSON.parse(d.datos));
     if(!String(motivo).trim())return res.status(400).json({error:'Indica el motivo de la modificación'});
-    const cambios=CAMPOS[d.tipo].filter(([k,,t])=>t!=='cliente' && String(nuevo[k]??'')!==String(datos[k]??''))
-      .map(([k,l])=>({k,campo:l,antes:datos[k]||'',despues:String(nuevo[k]??'')}));
+    // Solo se consideran los campos enviados; el conductor y los destinos se normalizan
+    const nuevo={...nuevoRaw};
+    if('conductor_nombre' in nuevo || 'conductor_dni' in nuevo){
+      nuevo.conductor_nombre=String(nuevo.conductor_nombre??datos.conductor_nombre).trim();
+      nuevo.conductor_dni=String(nuevo.conductor_dni??datos.conductor_dni).trim().toUpperCase();
+    }
+    if('destinos' in nuevo || 'destino' in nuevo){
+      const lista=(Array.isArray(nuevo.destinos)?nuevo.destinos:[nuevo.destino]).map(x=>String(x||'').trim()).filter(Boolean);
+      nuevo.destinos=lista; nuevo.destino=lista[0]||'';
+    }
+    const cambios=[];
+    CAMPOS[d.tipo].forEach(([k,l,t])=>{
+      if(t==='cliente'||!(k in nuevo))return;
+      if(k==='destino'){
+        const a=datos.destinos.join(' | '),b=nuevo.destinos.join(' | ');
+        if(a!==b)cambios.push({k:'destinos',campo:nuevo.destinos.length>1||datos.destinos.length>1?'Lugares de descarga':l,antes:a,despues:b});
+      }else if(String(nuevo[k]??'')!==String(datos[k]??''))cambios.push({k,campo:l,antes:datos[k]||'',despues:String(nuevo[k]??'')});
+    });
     if(!cambios.length)return res.status(400).json({error:'No hay cambios que guardar'});
-    const e=faltan(d.tipo,{...datos,...nuevo});if(e)return res.status(400).json({error:e});
+    cambios.forEach(c=>{if(c.k==='destinos')datos.destinos=nuevo.destinos;});
+    nuevo.destinos=nuevo.destinos||datos.destinos;
+    const e=faltan(d.tipo,normDatos({...datos,...nuevo}));if(e)return res.status(400).json({error:e});
     const ahora=new Date().toISOString();
-    cambios.forEach(c=>{datos[c.k]=c.despues;});
+    cambios.forEach(c=>{if(c.k!=='destinos')datos[c.k]=c.despues;});
+    datos.destino=datos.destinos[0]||'';datos.conductor=compConductor(datos.conductor_nombre,datos.conductor_dni);
     (datos._hist ||= []).push({fecha:ahora,por:req.u.nombre,motivo:String(motivo).trim(),cambios});
     d.datos=JSON.stringify(datos);d.modificado=ahora;
     db.prepare('UPDATE docs SET datos=?,modificado=? WHERE id=?').run(d.datos,ahora,d.id);
@@ -929,6 +996,32 @@ app.patch('/api/docs/:id/estado', async (req,res)=>{
     logAudit(req.u.usuario, req.ip, 'DOC_ESTADO', `Cambio de estado en ${num(d)} a ${estado}: ${motivo}`);
     res.json({ok:1,estado});
   }catch(x){console.error(x);res.status(500).json({error:'No se pudo cambiar el estado'});}
+});
+
+// Avisos: ITV próximas/caducadas y DeCA abiertos más de 12 horas sin cambios
+app.get('/api/avisos', (req, res) => {
+  const out = [], hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  if (can(req.u, 'transporte')) {
+    db.prepare("SELECT id,matricula,itv FROM vehiculos WHERE itv<>''").all().forEach(v => {
+      const f = new Date(v.itv + 'T00:00:00'); if (isNaN(f)) return;
+      const dias = Math.round((f - hoy) / 864e5);
+      if (dias > 30) return;
+      out.push({ id: `itv-${v.id}-${v.itv}-${dias <= 7 ? 'c' : 'w'}`, tipo: 'itv', nivel: dias <= 7 ? 'crit' : 'warn', ref: v.matricula,
+        titulo: dias < 0 ? `ITV caducada: ${v.matricula}` : `ITV de ${v.matricula} caduca ${dias === 0 ? 'hoy' : 'en ' + dias + (dias === 1 ? ' día' : ' días')}`,
+        detalle: `Fecha de caducidad: ${v.itv}`, enlace: '#/transporte' });
+    });
+  }
+  if (can(req.u, 'deca_ver') || can(req.u, 'deca_crear')) {
+    const lim = Date.now() - 12 * 3600e3;
+    db.prepare("SELECT id,creado,modificado FROM docs WHERE tipo='deca' AND COALESCE(estado,'emitido')='emitido'").all().forEach(d => {
+      const ult = new Date(d.modificado || d.creado).getTime(); if (ult > lim) return;
+      const h = Math.floor((Date.now() - ult) / 3600e3);
+      out.push({ id: 'deca-' + d.id + '-' + Math.floor(ult / 1000), tipo: 'deca', nivel: h >= 24 ? 'crit' : 'warn', ref: num({ ...d, tipo: 'deca' }),
+        titulo: `${num({ ...d, tipo: 'deca' })} lleva ${h >= 48 ? Math.floor(h / 24) + ' días' : h + ' h'} abierto sin cambios`,
+        detalle: 'Ciérralo o anúlalo si el transporte ya terminó.', enlace: '#/envios' });
+    });
+  }
+  res.json(out.sort((a, b) => (a.nivel === 'crit' ? 0 : 1) - (b.nivel === 'crit' ? 0 : 1)));
 });
 
 // Manejador global de errores para no filtrar trazas ni información interna

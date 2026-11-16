@@ -79,4 +79,15 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 - Los documentos PDF oficiales generados se almacenan en `data/pdf/<token>.pdf`.
 - La URL pública accesible mediante QR `/d/<token>` permite la comprobación en carretera por las autoridades de tráfico e inspección de transportes sin necesidad de credenciales.
 
+## Novedades de la versión 1.1.0
+
+- **Ubicaciones**: el nombre ya no es único (una misma sede puede ser carga y descarga). Solo se rechaza una ubicación idéntica en nombre, tipo y dirección. Nuevo tipo «Carga y descarga». La base de datos antigua se migra sola al arrancar.
+- **Sugerencias al escribir** en destinatario, lugar de carga y lugares de descarga (con teclado: flechas, Intro, Esc). Se ordenan según el tipo de ubicación más adecuado a cada campo.
+- **Varios lugares de descarga/entrega** en DeCA y eCMR; el PDF los lista todos («Lugar de descarga 1 de 3», …).
+- **Modificar un documento emitido**: matrícula, remolque y conductor usan un selector con «Otro…»; el conductor se separa en nombre y DNI/NIF; origen, destinatario y descargas usan las sugerencias. Los documentos antiguos se leen y se muestran con el formato nuevo sin tocar lo guardado.
+- **Modo oscuro** automático según el tema del dispositivo.
+- **Avisos** (campana): ITV a 30 días, a 7 días o caducada, y DeCA emitidos sin cambios desde hace más de 12 h. Con «Activar avisos del sistema» se muestran también como notificaciones del dispositivo mientras la aplicación esté abierta (requiere HTTPS o localhost).
+
+---
+
 Creado con ❤️ por im7manu

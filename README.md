@@ -128,6 +128,8 @@ WantedBy=multi-user.target
 
 El servicio necesita permiso de escritura sobre la carpeta de la aplicación (no solo sobre `data/`), porque el supervisor sustituye sus archivos.
 
+**Con Docker:** usa el `Dockerfile` y `docker-compose.example.yml` incluidos. La clave es montar la carpeta completa del proyecto en `/app` (no solo `data/`): si el código está solo dentro de la imagen, el actualizador no puede sustituirlo, y además los cambios se perderían al recrear el contenedor. La carpeta debe pertenecer al usuario con UID 1000 (el usuario `node` de la imagen).
+
 **Cómo publicar una versión nueva:**
 
 1. Sube `version` en `package.json` (p. ej. `1.2.1`) y fusiona los cambios en `main`.

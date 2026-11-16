@@ -27,7 +27,17 @@ const ANTIGUOS = ['server.js', 'actualizaciones.js', 'public', 'scripts', 'docs'
 const log = m => console.log(`[supervisor ${new Date().toISOString().slice(0, 19).replace('T', ' ')}] ${m}`);
 const leer = () => { try { return JSON.parse(fs.readFileSync(ESTADO, 'utf8')); } catch { return null; } };
 const escribir = st => { fs.writeFileSync(ESTADO + '.tmp', JSON.stringify(st, null, 2)); fs.renameSync(ESTADO + '.tmp', ESTADO); };
-const mover = (a, b) => { fs.mkdirSync(path.dirname(b), { recursive: true }); fs.renameSync(a, b); };
+// Mueve un archivo o carpeta. Si origen y destino están en montajes distintos (p. ej. volúmenes de Docker
+// anidados) renameSync falla con EXDEV y se copia y borra en su lugar.
+const mover = (a, b) => {
+  fs.mkdirSync(path.dirname(b), { recursive: true });
+  try { fs.renameSync(a, b); }
+  catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    fs.cpSync(a, b, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+};
 
 let hijo = null, parando = false, fallosSeguidos = 0, temporizadorSalud = null, abortarPorSalud = false;
 

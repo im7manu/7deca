@@ -92,9 +92,59 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 - **Corregido**: quien podía crear documentos sin tener permiso de gestionar empresas o transporte veía vacíos los desplegables de contraparte y vehículo y no podía emitir nada.
 - **Seguridad**: las eliminaciones del catálogo quedan en la auditoría; cookie de cierre de sesión con `HttpOnly`; nueva variable `TRUST_PROXY` (ver abajo).
 - Detalles: saludo según la hora, la app se puede instalar en el móvil (manifest enlazado) y las direcciones largas ya no descuadran la pantalla de inicio.
+- **Actualizaciones automáticas y seguras** desde las Releases de GitHub, con copia de seguridad previa y vuelta atrás automática si la nueva versión falla (ver «Actualizaciones» más abajo).
 - **Guía de uso en PDF** para usuarios sin conocimientos técnicos: [`docs/Guia-de-uso-DeCA-eCMR.pdf`](docs/Guia-de-uso-DeCA-eCMR.pdf).
 
-### Detrás de un proxy inverso (nginx, Caddy, Cloudflare…)
+## 🔄 Actualizaciones
+
+La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/gestor-deca-ecmr`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática (de madrugada, entre las 3:00 y las 5:00).
+
+**Cómo se instala sin riesgo:**
+
+1. Se descarga la versión nueva en `data/actualizaciones/` y se verifica: que es esta aplicación, que la versión coincide con la publicada y es más reciente, que el código no tiene errores de sintaxis, que no contiene enlaces simbólicos y que la versión de Node del servidor es suficiente. Después se preparan sus dependencias (se copian si no cambian, o se instalan con `npm ci`). Todo esto ocurre con la aplicación en marcha.
+2. Se hace una **copia de seguridad** de la base de datos en `data/copias/<fecha>-<de>-a-<a>/`.
+3. La aplicación se reinicia. El **supervisor** (`scripts/supervisor.js`) guarda el código actual en esa misma copia y coloca el nuevo. La carpeta `data/` (base de datos y PDF) no se toca nunca.
+4. La nueva versión tiene un **periodo de prueba** (60 s). Si se cae o no responde durante ese periodo, el supervisor **restaura solo** el código y la base de datos anteriores; la base de datos de la versión fallida se guarda también en la copia.
+
+Se conservan las 3 últimas copias, descargables desde la propia pantalla. Todo queda en la auditoría (`ACTUALIZACION_*`).
+
+**Requisito:** arrancar con `npm start`, que lanza el supervisor. Con `node server.js` la app funciona, pero no puede instalar actualizaciones (la pantalla lo indica). Con systemd:
+
+```ini
+# /etc/systemd/system/deca-ecmr.service
+[Unit]
+Description=Gestor DeCA y eCMR
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/gestor-deca-ecmr
+ExecStart=/usr/bin/node scripts/supervisor.js
+Environment=PORT=9000 BASE_URL=https://tudominio.com TRUST_PROXY=1
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+El servicio necesita permiso de escritura sobre la carpeta de la aplicación (no solo sobre `data/`), porque el supervisor sustituye sus archivos.
+
+**Con Docker:** usa el `Dockerfile` y `docker-compose.example.yml` incluidos. La clave es montar la carpeta completa del proyecto en `/app` (no solo `data/`): si el código está solo dentro de la imagen, el actualizador no puede sustituirlo, y además los cambios se perderían al recrear el contenedor. La carpeta debe pertenecer al usuario con UID 1000 (el usuario `node` de la imagen).
+
+**Cómo publicar una versión nueva:**
+
+1. Sube `version` en `package.json` (p. ej. `1.2.1`) y fusiona los cambios en `main`.
+2. En GitHub, crea una **Release** con la etiqueta `v1.2.1` (debe coincidir exactamente con `package.json`) y escribe las novedades en la descripción: es el texto que verán los administradores.
+3. Las instalaciones la detectarán en la siguiente comprobación (como mucho, una hora).
+
+Los borradores y las *pre-releases* se ignoran, así que puedes preparar una versión sin que se instale.
+
+**Variables de entorno opcionales:** `UPDATE_DISABLED=1` (desactiva las actualizaciones), `UPDATE_REPO` (otro repositorio), `UPDATE_HEALTH_SECONDS` (duración del periodo de prueba), `UPDATE_KEEP_BACKUPS` (número de copias que se conservan).
+
+> Si la aplicación está instalada como un clon de git, tras una actualización `git status` mostrará los archivos cambiados. Es normal: el código coincide con la Release instalada.
+
+> Las instalaciones de la versión 1.1.0 o anteriores no incluyen el actualizador: hay que actualizarlas a mano una vez (copiar los archivos nuevos y arrancar con `npm start`). A partir de ahí se actualizan solas.
+
+## 🌐 Detrás de un proxy inverso (nginx, Caddy, Cloudflare…)
 
 Arranca con `TRUST_PROXY=1` para que la aplicación vea la IP real de cada usuario:
 

@@ -3,9 +3,9 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
-const server = resolve(root, 'server.js');
+const server = resolve(root, 'scripts', 'supervisor.js');
 if (!existsSync(server)) {
-  console.error('No se encuentra server.js');
+  console.error('No se encuentra scripts/supervisor.js');
   process.exit(1);
 }
 console.log('Iniciando DeCA y eCMR con Node...');

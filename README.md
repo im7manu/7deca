@@ -79,4 +79,40 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 - Los documentos PDF oficiales generados se almacenan en `data/pdf/<token>.pdf`.
 - La URL pública accesible mediante QR `/d/<token>` permite la comprobación en carretera por las autoridades de tráfico e inspección de transportes sin necesidad de credenciales.
 
+## Novedades de la versión 1.2.0
+
+- **Asignar documentos a usuarios**: al crear un DeCA o eCMR (o después, con «Asignar»/«Reasignar») se puede elegir el usuario que hará el transporte. El administrador y quienes tienen permiso de ver o crear documentos siguen viéndolo todo; el usuario asignado, aunque no tenga ningún permiso, ve solo sus documentos y puede **cerrarlos él mismo** al terminar (no puede modificarlos, anularlos ni reasignarlos).
+- **Emitir borradores**: los borradores se pueden emitir más tarde con el botón «Emitir» (antes se quedaban en borrador para siempre). Los cambios de estado siguen un orden fijo: borrador → emitido → cerrado, o anulado. Cerrado y anulado son definitivos y ya no se pueden modificar desde la API.
+- **Marca de agua** «BORRADOR» o «ANULADO» en el PDF, para que nadie que escanee el QR los confunda con un documento válido.
+- **Duplicar envío**: crea un envío nuevo con los datos de otro y la fecha de hoy.
+- **Exportar a Excel** (CSV) la lista de envíos que se está viendo.
+- **Copia de seguridad** de la base de datos con un clic (administradores, en Usuarios). Los PDF se regeneran solos a partir de ella al arrancar.
+- **Sugerencias de mercancía** desde el catálogo al escribir.
+- El **nº de albarán** y las **observaciones del transportista** ahora aparecen en el PDF y se pueden modificar (antes el albarán se pedía pero no se guardaba en el documento).
+- **Corregido**: quien podía crear documentos sin tener permiso de gestionar empresas o transporte veía vacíos los desplegables de contraparte y vehículo y no podía emitir nada.
+- **Seguridad**: las eliminaciones del catálogo quedan en la auditoría; cookie de cierre de sesión con `HttpOnly`; nueva variable `TRUST_PROXY` (ver abajo).
+- Detalles: saludo según la hora, la app se puede instalar en el móvil (manifest enlazado) y las direcciones largas ya no descuadran la pantalla de inicio.
+- **Guía de uso en PDF** para usuarios sin conocimientos técnicos: [`docs/Guia-de-uso-DeCA-eCMR.pdf`](docs/Guia-de-uso-DeCA-eCMR.pdf).
+
+### Detrás de un proxy inverso (nginx, Caddy, Cloudflare…)
+
+Arranca con `TRUST_PROXY=1` para que la aplicación vea la IP real de cada usuario:
+
+```bash
+BASE_URL=https://tudominio.com TRUST_PROXY=1 npm start
+```
+
+Sin esta opción todos los usuarios comparten la IP del proxy, de modo que la limitación de intentos de acceso por IP podría bloquear el inicio de sesión de todo el mundo a la vez y la auditoría registraría siempre la misma IP.
+
+## Novedades de la versión 1.1.0
+
+- **Ubicaciones**: el nombre ya no es único (una misma sede puede ser carga y descarga). Solo se rechaza una ubicación idéntica en nombre, tipo y dirección. Nuevo tipo «Carga y descarga». La base de datos antigua se migra sola al arrancar.
+- **Sugerencias al escribir** en destinatario, lugar de carga y lugares de descarga (con teclado: flechas, Intro, Esc). Se ordenan según el tipo de ubicación más adecuado a cada campo.
+- **Varios lugares de descarga/entrega** en DeCA y eCMR; el PDF los lista todos («Lugar de descarga 1 de 3», …).
+- **Modificar un documento emitido**: matrícula, remolque y conductor usan un selector con «Otro…»; el conductor se separa en nombre y DNI/NIF; origen, destinatario y descargas usan las sugerencias. Los documentos antiguos se leen y se muestran con el formato nuevo sin tocar lo guardado.
+- **Modo oscuro** automático según el tema del dispositivo.
+- **Avisos** (campana): ITV a 30 días, a 7 días o caducada, y DeCA emitidos sin cambios desde hace más de 12 h. Con «Activar avisos del sistema» se muestran también como notificaciones del dispositivo mientras la aplicación esté abierta (requiere HTTPS o localhost).
+
+---
+
 Creado con ❤️ por im7manu

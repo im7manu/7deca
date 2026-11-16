@@ -5,6 +5,7 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const PORT = Number(process.env.PORT || 9000);
 const BASE = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
@@ -84,6 +85,8 @@ for (const sql of [
   'ALTER TABLE usuarios ADD COLUMN bloqueado_hasta INTEGER DEFAULT 0',
   'ALTER TABLE sesiones ADD COLUMN ip TEXT DEFAULT ""',
   'ALTER TABLE sesiones ADD COLUMN creado INTEGER DEFAULT 0',
+  'ALTER TABLE docs ADD COLUMN asignado INTEGER',
+  'ALTER TABLE docs ADD COLUMN creador_id INTEGER',
 ]) { try { db.exec(sql); } catch {} }
 
 // Las ubicaciones pueden repetir nombre (una misma sede puede ser carga y descarga):
@@ -238,8 +241,9 @@ const CAMPOS = {
     ['matricula', 'Matrícula del vehículo'], ['remolque', 'Matrícula del remolque'],
     ['conductor_nombre', 'Conductor (nombre)'], ['conductor_dni', 'Conductor (DNI/NIF)'], ['origen', 'Lugar de carga'],
     ['f_carga', 'Fecha de realización del transporte', 'date'], ['destino', 'Lugar de descarga'],
-    ['mercancia', 'Naturaleza de la mercancía'], ['peso', 'Peso (kg)', 'number'],
+    ['mercancia', 'Naturaleza de la mercancía'], ['peso', 'Peso (kg)', 'number'], ['nalbaran', 'Nº de albarán'],
     ['autorizacion', 'Autorización especial de circulación (si procede)'], ['obs', 'Observaciones'],
+    ['obs_transportista', 'Observaciones del transportista efectivo'],
   ],
   ecmr: [
     ['cliente', 'Remitente (cliente)', 'cliente'], ['destinatario', 'Destinatario'],
@@ -293,7 +297,7 @@ async function generarPdf(d) {
   const datos = normDatos(JSON.parse(d.datos)), emp = datos._emp || {}, link = url(d), hist = datos._hist || [];
   const qr = await QR.toBuffer(link, { margin: 1, width: 240 });
   const estado = d.estado || 'emitido';
-  const p = new PDFDocument({ size: 'A4', margin: 40, info: {
+  const p = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true, info: {
     Title: `${TITULO[d.tipo]} ${num(d)}`,
     Author: emp.nombre || '', Creator: 'DeCA y eCMR', CreationDate: new Date(d.creado), ModDate: new Date(d.modificado || d.creado),
   }});
@@ -332,7 +336,6 @@ async function generarPdf(d) {
     if (k === 'destino' && datos.destinos.length > 1) datos.destinos.forEach((x, i) => fila(`${l} ${i + 1} de ${datos.destinos.length}`, x));
     else fila(l, datos[k]);
   });
-  if (datos.obs_transportista) fila('Observaciones del transportista efectivo', datos.obs_transportista);
   if (d.tipo === 'ecmr') p.moveDown().font('Helvetica-Oblique').fontSize(8).fillColor('#555')
     .text('Este transporte queda sometido al Convenio CMR, cualquiera que sea la cláusula en contrario.');
   if (hist.length) {
@@ -342,6 +345,21 @@ async function generarPdf(d) {
       x.cambios.forEach(c => p.font('Helvetica').fontSize(8).fillColor('#333')
         .text(`   ${c.campo}: de «${c.antes || '-'}» a «${c.despues || '-'}»`).moveDown(.1));
     });
+  }
+  // Marca de agua en borradores y anulados: quien escanee el QR no puede confundirlos con un documento válido
+  const marca = { borrador: ['BORRADOR', '#6d7483'], anulado: ['ANULADO', '#bd3f46'] }[estado];
+  if (marca) {
+    const { start, count } = p.bufferedPageRange();
+    for (let i = start; i < start + count; i++) {
+      p.switchToPage(i);
+      p.save().rotate(-35, { origin: [297, 421] }).opacity(0.13).fillColor(marca[1]).font('Helvetica-Bold').fontSize(110)
+        .text(marca[0], -60, 370, { width: 715, align: 'center', lineBreak: false }).restore();
+      // El pie va dentro del margen inferior: se anula el margen un momento para que pdfkit no abra otra página
+      const mb = p.page.margins.bottom; p.page.margins.bottom = 0;
+      p.save().opacity(1).fillColor(marca[1]).font('Helvetica-Bold').fontSize(9)
+        .text(estado === 'borrador' ? 'BORRADOR: este documento no ha sido emitido y no ampara el transporte.' : 'DOCUMENTO ANULADO: no ampara el transporte.', 40, 812, { width: 515, align: 'center', lineBreak: false }).restore();
+      p.page.margins.bottom = mb;
+    }
   }
   p.end(); await fin;
   const buf = Buffer.concat(chunks);
@@ -355,6 +373,12 @@ function estadoLabel(s) { return ({ borrador: 'Borrador', emitido: 'Emitido', an
 // APLICACIÓN EXPRESS Y CABECERAS DE SEGURIDAD
 // ----------------------------------------------------
 const app = express();
+
+// Detrás de un proxy inverso (nginx, Caddy, Cloudflare…) indica TRUST_PROXY=1 para que la IP real del
+// usuario llegue a la limitación de intentos y a la auditoría. Sin esto, todos comparten la IP del proxy
+// y un atacante podría bloquear el inicio de sesión de todos los usuarios.
+const TRUST_PROXY = process.env.TRUST_PROXY;
+if (TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY === 'true' ? true : TRUST_PROXY);
 
 // Eliminar cabecera de fingerprint de tecnología
 app.disable('x-powered-by');
@@ -638,7 +662,7 @@ app.post('/api/logout', (req, res) => {
   if (req.u) {
     logAudit(req.u.usuario, req.ip, 'LOGOUT', 'Cierre de sesión voluntario');
   }
-  res.set('Set-Cookie', 'sid=; Path=/; Max-Age=0').json({ ok: 1 });
+  res.set('Set-Cookie', 'sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0').json({ ok: 1 });
 });
 
 // ----------------------------------------------------
@@ -653,8 +677,22 @@ app.get('/api/yo', (req, res) => res.json({
   email: req.u.email || '',
   rol: req.u.rol,
   permisos: Object.keys(PERMISOS).filter(p => can(req.u, p)),
+  asignados: Number(db.prepare("SELECT count(*) AS c FROM docs WHERE asignado=?").get(req.u.id)?.c || 0),
   PERMISOS,
 }));
+
+// Copia de seguridad completa de la base de datos (los PDF se regeneran solos a partir de ella al arrancar)
+app.get('/api/backup', adm, (req, res) => {
+  const tmp = path.join(os.tmpdir(), `deca-ecmr-${crypto.randomBytes(8).toString('hex')}.db`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+  } catch (e) {
+    console.error('Error al crear la copia de seguridad:', e);
+    return res.status(500).json({ error: 'No se pudo crear la copia de seguridad.' });
+  }
+  logAudit(req.u.usuario, req.ip, 'BACKUP_DESCARGADO', 'Descarga de copia de seguridad de la base de datos', 'aviso');
+  res.download(tmp, `copia-deca-ecmr-${new Date().toISOString().slice(0, 10)}.db`, () => fs.unlink(tmp, () => {}));
+});
 
 // Logs de Auditoría de Seguridad (solo administradores)
 app.get('/api/audit-logs', adm, (req, res) => {
@@ -747,6 +785,7 @@ app.delete('/api/usuarios/:id', adm, (req, res) => {
 
   const u = db.prepare('SELECT usuario FROM usuarios WHERE id=?').get(id);
   db.prepare('DELETE FROM sesiones WHERE uid=?').run(id);
+  db.prepare('UPDATE docs SET asignado=NULL WHERE asignado=?').run(id);
   db.prepare('DELETE FROM usuarios WHERE id=?').run(id);
   logAudit(req.u.usuario, req.ip, 'USUARIO_ELIMINADO', `Eliminación del usuario ${u?.usuario || id}`);
   res.json({ ok: 1 });
@@ -768,6 +807,8 @@ app.post('/api/clientes', need('clientes'), (req, res) => {
   res.json({ ok: 1 });
 });
 app.delete('/api/clientes/:id', need('clientes'), (req, res) => {
+  const c = db.prepare('SELECT nombre,nif FROM clientes WHERE id=?').get(req.params.id);
+  if (c) logAudit(req.u.usuario, req.ip, 'CLIENTE_ELIMINADO', `${c.nombre} (${c.nif})`);
   db.prepare('DELETE FROM clientes WHERE id=?').run(req.params.id);
   db.prepare('DELETE FROM empresas WHERE cliente_id=?').run(req.params.id);
   res.json({ ok: 1 });
@@ -805,11 +846,18 @@ app.post('/api/empresas', need('empresas'), (req, res) => {
   } catch (e) { res.status(400).json({ error: 'No se pudo guardar (¿ya existe ese NIF/CIF?)' }); }
 });
 app.delete('/api/empresas/:id', need('empresas'), (req, res) => {
-  const row = db.prepare('SELECT cliente_id FROM empresas WHERE id=?').get(req.params.id);
+  const row = db.prepare('SELECT cliente_id,nombre,nif FROM empresas WHERE id=?').get(req.params.id);
+  if (row) logAudit(req.u.usuario, req.ip, 'EMPRESA_ELIMINADA', `${row.nombre} (${row.nif})`);
   if (row?.cliente_id) db.prepare('DELETE FROM clientes WHERE id=?').run(row.cliente_id);
   db.prepare('DELETE FROM empresas WHERE id=?').run(req.params.id);
   res.json({ ok: 1 });
 });
+
+// Registra en auditoría qué se elimina (tabla y expresión son constantes del código, nunca datos del usuario)
+function borrado(req, tabla, expr, accion) {
+  const r = db.prepare(`SELECT ${expr} AS t FROM ${tabla} WHERE id=?`).get(req.params.id);
+  if (r) logAudit(req.u.usuario, req.ip, accion, String(r.t));
+}
 
 // Medios de transporte
 app.get('/api/vehiculos', need('transporte'), (_, res) => res.json(db.prepare('SELECT * FROM vehiculos ORDER BY matricula').all()));
@@ -823,7 +871,7 @@ app.post('/api/vehiculos', need('transporte'), (req, res) => {
     res.json({ ok: 1 });
   } catch { res.status(400).json({ error: 'No se pudo guardar (¿ya existe esa matrícula?)' }); }
 });
-app.delete('/api/vehiculos/:id', need('transporte'), (req, res) => { db.prepare('DELETE FROM vehiculos WHERE id=?').run(req.params.id); res.json({ok:1}); });
+app.delete('/api/vehiculos/:id', need('transporte'), (req, res) => { borrado(req, 'vehiculos', 'matricula', 'VEHICULO_ELIMINADO'); db.prepare('DELETE FROM vehiculos WHERE id=?').run(req.params.id); res.json({ok:1}); });
 
 app.get('/api/conductores', need('transporte'), (_, res) => res.json(db.prepare('SELECT id,nombre,dni,telefono,email,activo FROM conductores ORDER BY nombre').all().map(c => ({...c, activo: !!c.activo}))));
 app.post('/api/conductores', need('transporte'), (req, res) => {
@@ -836,9 +884,23 @@ app.post('/api/conductores', need('transporte'), (req, res) => {
     res.json({ok:1});
   } catch { res.status(400).json({ error: 'No se pudo guardar (¿ya existe ese DNI/NIE?)' }); }
 });
-app.delete('/api/conductores/:id', need('transporte'), (req,res)=>{ db.prepare('DELETE FROM conductores WHERE id=?').run(req.params.id); res.json({ok:1}); });
+app.delete('/api/conductores/:id', need('transporte'), (req,res)=>{ borrado(req, 'conductores', "nombre||' ('||dni||')'", 'CONDUCTOR_ELIMINADO'); db.prepare('DELETE FROM conductores WHERE id=?').run(req.params.id); res.json({ok:1}); });
 
 // Mercancías
+// Catálogo de solo lectura para quien crea documentos sin tener permiso de gestionar empresas o transporte:
+// sin esto, los desplegables de contraparte y vehículo salen vacíos y no se puede emitir ningún documento.
+app.get('/api/catalogo-docs', (req, res) => {
+  if (!(can(req.u,'deca_crear') || can(req.u,'ecmr_crear'))) return res.status(403).json({error:'No tienes permiso'});
+  res.json({
+    empresas: db.prepare('SELECT id,nombre,nif,direccion,cp,ciudad,tipo FROM empresas ORDER BY nombre COLLATE NOCASE').all(),
+    vehiculos: db.prepare('SELECT id,matricula,tipo,modelo,estado FROM vehiculos ORDER BY matricula').all(),
+    conductores: db.prepare('SELECT id,nombre,dni FROM conductores WHERE activo=1 ORDER BY nombre COLLATE NOCASE').all().map(c => ({ ...c, activo: true })),
+  });
+});
+app.get('/api/mercancias/sugerencias', (req, res) => {
+  if (!(can(req.u,'mercancias') || can(req.u,'deca_crear') || can(req.u,'ecmr_crear'))) return res.status(403).json({error:'No tienes permiso'});
+  res.json(db.prepare('SELECT id,nombre,codigo,unidad FROM mercancias ORDER BY nombre COLLATE NOCASE').all());
+});
 app.get('/api/mercancias', need('mercancias'), (_, res) => res.json(db.prepare('SELECT * FROM mercancias ORDER BY nombre').all()));
 app.post('/api/mercancias', need('mercancias'), (req,res)=>{
   const b=req.body||{}, id=Number(b.id)||0, nombre=String(b.nombre||'').trim();
@@ -850,7 +912,7 @@ app.post('/api/mercancias', need('mercancias'), (req,res)=>{
     res.json({ok:1});
   } catch { res.status(400).json({error:'No se pudo guardar (¿ya existe ese nombre?)'}); }
 });
-app.delete('/api/mercancias/:id', need('mercancias'), (req,res)=>{db.prepare('DELETE FROM mercancias WHERE id=?').run(req.params.id);res.json({ok:1});});
+app.delete('/api/mercancias/:id', need('mercancias'), (req,res)=>{borrado(req, 'mercancias', 'nombre', 'MERCANCIA_ELIMINADA');db.prepare('DELETE FROM mercancias WHERE id=?').run(req.params.id);res.json({ok:1});});
 
 // Ubicaciones frecuentes
 app.get('/api/ubicaciones/sugerencias', (req, res) => {
@@ -870,22 +932,44 @@ app.post('/api/ubicaciones', need('ubicaciones'), (req,res)=>{
     res.json({ok:1});
   } catch { res.status(400).json({error:'No se pudo guardar la ubicación'}); }
 });
-app.delete('/api/ubicaciones/:id', need('ubicaciones'), (req,res)=>{db.prepare('DELETE FROM ubicaciones WHERE id=?').run(req.params.id);res.json({ok:1});});
+app.delete('/api/ubicaciones/:id', need('ubicaciones'), (req,res)=>{borrado(req, 'ubicaciones', "nombre||' · '||tipo", 'UBICACION_ELIMINADA');db.prepare('DELETE FROM ubicaciones WHERE id=?').run(req.params.id);res.json({ok:1});});
 
 // Documentos DeCA y eCMR
+// Visibilidad: administradores y usuarios con permiso de ver/crear el tipo ven todos los documentos de ese tipo.
+// El resto solo ve los documentos que tiene asignados (y los que creó él mismo).
+const gestionaDoc = (u, d) => can(u, d.tipo + '_crear');
+const asignadoA = (u, d) => !!u && d.asignado != null && Number(d.asignado) === Number(u.id);
+const veDoc = (u, d) => can(u, d.tipo + '_ver') || gestionaDoc(u, d) || asignadoA(u, d) || (d.creador_id != null && Number(d.creador_id) === Number(u.id));
+// Cambios de estado permitidos: borrador → emitido/anulado; emitido → cerrado/anulado. Anulado y cerrado son definitivos.
+const TRANSICIONES = { borrador: ['emitido', 'anulado'], emitido: ['cerrado', 'anulado'], anulado: [], cerrado: [] };
+const DOC_SQL = `SELECT d.id,d.tipo,d.token,d.creado,d.modificado,d.datos,d.usuario,COALESCE(d.estado,'emitido') AS estado,
+  d.asignado,d.creador_id,u.nombre AS asignado_nombre FROM docs d LEFT JOIN usuarios u ON u.id=d.asignado`;
+const docOut = (u, d) => ({
+  id: d.id, tipo: d.tipo, num: num(d), url: url(d), creado: d.creado, mod: d.modificado, por: d.usuario, estado: d.estado,
+  asignado: d.asignado ?? null, asignado_nombre: d.asignado_nombre || '', mio: asignadoA(u, d), gestiona: gestionaDoc(u, d),
+  datos: normDatos(JSON.parse(d.datos)),
+});
+// Valida el usuario al que se asigna un documento (vacío = sin asignar)
+const resolverAsignado = v => {
+  if (v === undefined || v === null || v === '') return { id: null };
+  const u = db.prepare('SELECT id,nombre,activo FROM usuarios WHERE id=?').get(Number(v));
+  if (!u || !u.activo) return { error: 'El usuario asignado no existe o está desactivado.' };
+  return { id: u.id, nombre: u.nombre };
+};
+
 app.get('/api/docs', (req,res)=>{
   const tipo = String(req.query.tipo || '');
-  if (!CAMPOS[tipo] || !(can(req.u,tipo+'_ver') || can(req.u,tipo+'_crear'))) return res.status(403).json({error:'No tienes permiso para ver estos documentos'});
-  res.json(db.prepare(`SELECT id,tipo,token,creado,modificado,datos,usuario,COALESCE(estado,'emitido') AS estado
-    FROM docs WHERE tipo=? ORDER BY id DESC LIMIT 500`).all(tipo).map(d=>({
-      id:d.id,tipo:d.tipo,num:num(d),url:url(d),creado:d.creado,mod:d.modificado,por:d.usuario,estado:d.estado,datos:normDatos(JSON.parse(d.datos))
-  })));
+  if (!CAMPOS[tipo]) return res.status(400).json({error:'Tipo de documento no válido'});
+  res.json(db.prepare(`${DOC_SQL} WHERE d.tipo=? ORDER BY d.id DESC LIMIT 500`).all(tipo).filter(d=>veDoc(req.u,d)).map(d=>docOut(req.u,d)));
 });
 app.get('/api/docs-todos', (req,res)=>{
-  const canSee = can(req.u,'deca_ver')||can(req.u,'deca_crear')||can(req.u,'ecmr_ver')||can(req.u,'ecmr_crear');
-  if(!canSee) return res.status(403).json({error:'No tienes permiso para ver documentos'});
-  res.json(db.prepare(`SELECT id,tipo,token,creado,modificado,datos,usuario,COALESCE(estado,'emitido') AS estado
-    FROM docs ORDER BY id DESC LIMIT 500`).all().filter(d=>can(req.u,d.tipo+'_ver')||can(req.u,d.tipo+'_crear')).map(d=>({id:d.id,tipo:d.tipo,num:num(d),url:url(d),creado:d.creado,mod:d.modificado,por:d.usuario,estado:d.estado,datos:normDatos(JSON.parse(d.datos))})));
+  res.json(db.prepare(`${DOC_SQL} ORDER BY d.id DESC LIMIT 500`).all().filter(d=>veDoc(req.u,d)).map(d=>docOut(req.u,d)));
+});
+
+// Usuarios a los que se puede asignar un documento
+app.get('/api/usuarios/asignables', (req,res)=>{
+  if(!(can(req.u,'deca_crear')||can(req.u,'ecmr_crear'))) return res.status(403).json({error:'No tienes permiso'});
+  res.json(db.prepare('SELECT id,usuario,nombre FROM usuarios WHERE activo=1 ORDER BY nombre COLLATE NOCASE').all());
 });
 
 const faltan = (tipo, datos) => {
@@ -907,10 +991,12 @@ const faltan = (tipo, datos) => {
 
 app.post('/api/docs', async (req,res)=>{
   try {
-    const {tipo,datos:payload={},estado:requestedEstado} = req.body||{};
+    const {tipo,datos:payload={},estado:requestedEstado,asignado:asignadoReq} = req.body||{};
     const datos=normDatos(payload);
+    delete datos.asignado;
     if(!CAMPOS[tipo]) return res.status(400).json({error:'Tipo de documento no válido'});
     if(!can(req.u,tipo+'_crear')) return res.status(403).json({error:'No tienes permiso para crear este documento'});
+    const asig=resolverAsignado(asignadoReq); if(asig.error) return res.status(400).json({error:asig.error});
 
     // Resolver contraparte: por ID de empresa o por datos manuales
     if (datos.contraparte_id && String(datos.contraparte_id).trim()) {
@@ -925,18 +1011,17 @@ app.post('/api/docs', async (req,res)=>{
     const e = faltan(tipo, datos); if(e) return res.status(400).json({error:e});
 
     // Compatibilidad retroactiva: rellenar campo 'cliente' para vistas antiguas
-    const miPapel = datos.mi_papel || 'transportista';
     const cpStr = `${datos.contraparte_nombre} (NIF ${datos.contraparte_nif}), ${datos.contraparte_direccion}`;
     datos.cliente = cpStr; // mantiene campo 'cliente' para listados y modal antiguo
 
     datos._emp = ajustes();
-    const estado=ESTADOS.includes(requestedEstado) ? requestedEstado : 'emitido';
+    const estado=['borrador','emitido'].includes(requestedEstado) ? requestedEstado : 'emitido';
     const token=crypto.randomBytes(24).toString('hex'), creado=new Date().toISOString();
-    const r=db.prepare('INSERT INTO docs(tipo,token,creado,modificado,datos,usuario,estado) VALUES(?,?,?,?,?,?,?)')
-      .run(tipo,token,creado,creado,JSON.stringify(datos),req.u.nombre,estado);
+    const r=db.prepare('INSERT INTO docs(tipo,token,creado,modificado,datos,usuario,estado,asignado,creador_id) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run(tipo,token,creado,creado,JSON.stringify(datos),req.u.nombre,estado,asig.id,req.u.id);
     const d={id:Number(r.lastInsertRowid),tipo,token,creado,modificado:creado,datos:JSON.stringify(datos),estado};
     await generarPdf(d);
-    logAudit(req.u.usuario, req.ip, 'DOC_CREADO', `Creación de ${num(d)} en estado ${estado}`);
+    logAudit(req.u.usuario, req.ip, 'DOC_CREADO', `Creación de ${num(d)} en estado ${estado}${asig.id?`, asignado a ${asig.nombre}`:''}`);
     res.json({num:num(d),url:url(d),id:d.id,estado});
   }catch(x){console.error(x);res.status(500).json({error:'No se pudo generar el PDF'});}
 });
@@ -945,7 +1030,8 @@ app.put('/api/docs/:id', async (req,res)=>{
   try{
     const d=db.prepare('SELECT * FROM docs WHERE id=?').get(req.params.id);
     if(!d)return res.status(404).json({error:'Documento no encontrado'});
-    if(!can(req.u,d.tipo+'_crear'))return res.status(403).json({error:'No tienes permiso para modificar este documento'});
+    if(!gestionaDoc(req.u,d))return res.status(403).json({error:'No tienes permiso para modificar este documento'});
+    if(['anulado','cerrado'].includes(d.estado||'emitido'))return res.status(400).json({error:`Un documento ${estadoLabel(d.estado).toLowerCase()} ya no se puede modificar. Puedes duplicarlo para crear uno nuevo.`});
     const {motivo='',...nuevoRaw}=req.body||{},datos=normDatos(JSON.parse(d.datos));
     if(!String(motivo).trim())return res.status(400).json({error:'Indica el motivo de la modificación'});
     // Solo se consideran los campos enviados; el conductor y los destinos se normalizan
@@ -985,17 +1071,42 @@ app.put('/api/docs/:id', async (req,res)=>{
 app.patch('/api/docs/:id/estado', async (req,res)=>{
   try{
     const d=db.prepare('SELECT * FROM docs WHERE id=?').get(req.params.id); if(!d)return res.status(404).json({error:'Documento no encontrado'});
-    if(!can(req.u,d.tipo+'_crear')) return res.status(403).json({error:'No tienes permiso para cambiar el estado'});
     const estado=String(req.body?.estado||''); if(!ESTADOS.includes(estado)) return res.status(400).json({error:'Estado no válido'});
+    // Quien gestiona el documento puede emitir, cerrar o anular; el usuario asignado solo puede cerrarlo
+    const puede = gestionaDoc(req.u,d) || (estado==='cerrado' && asignadoA(req.u,d));
+    if(!puede) return res.status(403).json({error:'No tienes permiso para cambiar el estado de este documento'});
+    const actual=d.estado||'emitido';
+    if(!TRANSICIONES[actual]?.includes(estado)){
+      const msg = ['anulado','cerrado'].includes(actual)
+        ? `El documento ya está ${estadoLabel(actual).toLowerCase()} y no admite más cambios.`
+        : `No se puede pasar de ${estadoLabel(actual).toLowerCase()} a ${estadoLabel(estado).toLowerCase()}.`;
+      return res.status(400).json({error:msg});
+    }
     const motivo=String(req.body?.motivo||'').trim();
-    if(['anulado','cerrado'].includes(estado) && !motivo) return res.status(400).json({error:'Indica el motivo'});
+    if(estado==='anulado' && !motivo) return res.status(400).json({error:'Indica el motivo de la anulación'});
     const datos=JSON.parse(d.datos), ahora=new Date().toISOString();
-    (datos._hist ||= []).push({fecha:ahora,por:req.u.nombre,motivo:motivo||`Cambio de estado a ${estadoLabel(estado)}`,cambios:[{k:'estado',campo:'Estado',antes:d.estado||'emitido',despues:estado}]});
+    if(estado==='emitido'){
+      // Al emitir un borrador se vuelve a validar y se actualizan los datos de Mi entidad
+      const e=faltan(d.tipo,normDatos(datos)); if(e) return res.status(400).json({error:e});
+      datos._emp=ajustes();
+    }
+    (datos._hist ||= []).push({fecha:ahora,por:req.u.nombre,motivo:motivo||`Cambio de estado a ${estadoLabel(estado)}`,cambios:[{k:'estado',campo:'Estado',antes:actual,despues:estado}]});
     db.prepare('UPDATE docs SET estado=?,datos=?,modificado=? WHERE id=?').run(estado,JSON.stringify(datos),ahora,d.id);
     const next={...d,estado,datos:JSON.stringify(datos),modificado:ahora}; await generarPdf(next);
-    logAudit(req.u.usuario, req.ip, 'DOC_ESTADO', `Cambio de estado en ${num(d)} a ${estado}: ${motivo}`);
+    logAudit(req.u.usuario, req.ip, 'DOC_ESTADO', `Cambio de estado en ${num(d)} de ${actual} a ${estado}${motivo?': '+motivo:''}`);
     res.json({ok:1,estado});
   }catch(x){console.error(x);res.status(500).json({error:'No se pudo cambiar el estado'});}
+});
+
+// Asignar o reasignar un documento a un usuario (no modifica el PDF)
+app.patch('/api/docs/:id/asignar', (req,res)=>{
+  const d=db.prepare('SELECT * FROM docs WHERE id=?').get(req.params.id); if(!d)return res.status(404).json({error:'Documento no encontrado'});
+  if(!gestionaDoc(req.u,d)) return res.status(403).json({error:'No tienes permiso para asignar este documento'});
+  if(['anulado','cerrado'].includes(d.estado||'emitido')) return res.status(400).json({error:'No se puede reasignar un documento cerrado o anulado.'});
+  const asig=resolverAsignado(req.body?.asignado); if(asig.error) return res.status(400).json({error:asig.error});
+  db.prepare('UPDATE docs SET asignado=? WHERE id=?').run(asig.id,d.id);
+  logAudit(req.u.usuario, req.ip, 'DOC_ASIGNADO', asig.id?`${num(d)} asignado a ${asig.nombre}`:`${num(d)} sin asignar`);
+  res.json({ok:1,asignado:asig.id,asignado_nombre:asig.nombre||''});
 });
 
 // Avisos: ITV próximas/caducadas y DeCA abiertos más de 12 horas sin cambios
@@ -1011,14 +1122,16 @@ app.get('/api/avisos', (req, res) => {
         detalle: `Fecha de caducidad: ${v.itv}`, enlace: '#/transporte' });
     });
   }
-  if (can(req.u, 'deca_ver') || can(req.u, 'deca_crear')) {
-    const lim = Date.now() - 12 * 3600e3;
-    db.prepare("SELECT id,creado,modificado FROM docs WHERE tipo='deca' AND COALESCE(estado,'emitido')='emitido'").all().forEach(d => {
+  {
+    // DeCA abiertos: todos para quien ve DeCA; solo los suyos para el usuario asignado
+    const lim = Date.now() - 12 * 3600e3, todos = can(req.u, 'deca_ver') || can(req.u, 'deca_crear');
+    db.prepare("SELECT id,creado,modificado,asignado,creador_id FROM docs WHERE tipo='deca' AND COALESCE(estado,'emitido')='emitido'").all()
+      .filter(d => todos || veDoc(req.u, { ...d, tipo: 'deca' })).forEach(d => {
       const ult = new Date(d.modificado || d.creado).getTime(); if (ult > lim) return;
       const h = Math.floor((Date.now() - ult) / 3600e3);
       out.push({ id: 'deca-' + d.id + '-' + Math.floor(ult / 1000), tipo: 'deca', nivel: h >= 24 ? 'crit' : 'warn', ref: num({ ...d, tipo: 'deca' }),
         titulo: `${num({ ...d, tipo: 'deca' })} lleva ${h >= 48 ? Math.floor(h / 24) + ' días' : h + ' h'} abierto sin cambios`,
-        detalle: 'Ciérralo o anúlalo si el transporte ya terminó.', enlace: '#/envios' });
+        detalle: todos ? 'Ciérralo o anúlalo si el transporte ya terminó.' : 'Ciérralo cuando termines el transporte.', enlace: '#/envios' });
     });
   }
   res.json(out.sort((a, b) => (a.nivel === 'crit' ? 0 : 1) - (b.nivel === 'crit' ? 0 : 1)));

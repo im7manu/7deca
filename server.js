@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { crearActualizador } = require('./actualizaciones');
+const PKG = require('./package.json');
 
 const PORT = Number(process.env.PORT || 9000);
 const BASE = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
@@ -113,6 +115,9 @@ const seed = () => {
   }
 };
 seed();
+
+// Actualizaciones automáticas (ver actualizaciones.js y scripts/supervisor.js)
+const actualizador = crearActualizador({ db, logAudit: (...a) => logAudit(...a), ROOT: __dirname, DATA, version: PKG.version, nombre: PKG.name });
 
 // Catálogo de permisos
 const PERMISOS = {
@@ -1109,6 +1114,28 @@ app.patch('/api/docs/:id/asignar', (req,res)=>{
   res.json({ok:1,asignado:asig.id,asignado_nombre:asig.nombre||''});
 });
 
+// Actualizaciones (solo administradores)
+app.get('/api/actualizaciones', adm, (req, res) => res.json(actualizador.estado()));
+app.post('/api/actualizaciones/buscar', adm, async (req, res) => {
+  try { await actualizador.buscar(req.u.usuario); res.json(actualizador.estado()); }
+  catch (e) { res.status(502).json({ error: e.message, ...actualizador.estado() }); }
+});
+app.post('/api/actualizaciones/instalar', adm, async (req, res) => {
+  try { await actualizador.instalar(req.u.usuario, req.ip); res.status(202).json(actualizador.estado()); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.put('/api/actualizaciones/config', adm, (req, res) => {
+  actualizador.setAuto(!!req.body?.auto);
+  logAudit(req.u.usuario, req.ip, 'ACTUALIZACION_CONFIG', `Instalación automática ${req.body?.auto ? 'activada' : 'desactivada'}`);
+  res.json(actualizador.estado());
+});
+app.get('/api/actualizaciones/copias/:id/db', adm, (req, res) => {
+  const f = actualizador.rutaCopia(String(req.params.id || ''));
+  if (!f) return res.status(404).json({ error: 'Copia no encontrada' });
+  logAudit(req.u.usuario, req.ip, 'BACKUP_DESCARGADO', `Descarga de la copia previa a actualización ${req.params.id}`, 'aviso');
+  res.download(f, `copia-${req.params.id}.db`);
+});
+
 // Avisos: ITV próximas/caducadas y DeCA abiertos más de 12 horas sin cambios
 app.get('/api/avisos', (req, res) => {
   const out = [], hoy = new Date(); hoy.setHours(0, 0, 0, 0);
@@ -1134,6 +1161,10 @@ app.get('/api/avisos', (req, res) => {
         detalle: todos ? 'Ciérralo o anúlalo si el transporte ya terminó.' : 'Ciérralo cuando termines el transporte.', enlace: '#/envios' });
     });
   }
+  if (req.u.rol === 'admin') {
+    const a = actualizador.hayAviso();
+    if (a) out.push({ id: 'upd-' + a.titulo, tipo: 'actualizacion', ref: '', enlace: '#/usuarios', ...a });
+  }
   res.json(out.sort((a, b) => (a.nivel === 'crit' ? 0 : 1) - (b.nivel === 'crit' ? 0 : 1)));
 });
 
@@ -1148,6 +1179,9 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`DeCA y eCMR activo en http://localhost:${PORT}`);
     console.log(`URL base para códigos QR: ${BASE}`);
+    console.log(`Versión ${PKG.version}${process.env.DECA_SUPERVISADO === '1' ? ' (con supervisor: actualizaciones activas)' : ' (sin supervisor: arranca con «npm start» para poder instalar actualizaciones)'}`);
+    actualizador.alArrancar();
+    actualizador.programar();
     if (isSetupNeeded()) {
       console.log('--------------------------------------------------------------------------');
       console.log('*** PRIMER ARRANQUE DETECTADO: SISTEMA EN MODO CONFIGURACIÓN INICIAL ***');

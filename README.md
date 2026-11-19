@@ -82,6 +82,18 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 - Los documentos PDF oficiales generados se almacenan en `data/pdf/<token>.pdf`.
 - La URL pública accesible mediante QR `/d/<token>` permite la comprobación en carretera por las autoridades de tráfico e inspección de transportes sin necesidad de credenciales.
 
+## Novedades de la versión 1.4.0: integración con Facturador
+
+En **Usuarios › Integraciones** el administrador crea un token de **solo lectura** para otra aplicación. Con él, el plugin **Gestor DeCA** de [Facturador](https://github.com/im7manu/facturador) lista los envíos emitidos o cerrados y los convierte en una factura en borrador (por viaje o por tonelada), recuerda cuáles están facturados y copia clientes, vehículos y conductores.
+
+El token se muestra una sola vez (solo se guarda su hash), no permite modificar nada, queda en la auditoría (`INTEGRACION_*`) y se puede revocar al momento.
+
+| Petición (con `Authorization: Bearer deca_…`) | Devuelve |
+|---|---|
+| `GET /api/integracion/v1/estado` | Versión y empresa |
+| `GET /api/integracion/v1/envios?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&tipo=deca\|ecmr&estado=emitido,cerrado` | Envíos con cliente, ruta, mercancía, peso, matrícula, conductor y enlace al PDF |
+| `GET /api/integracion/v1/empresas`, `/vehiculos`, `/conductores` | Catálogo |
+
 ## Novedades de la versión 1.3.0
 
 - **Passkeys**: cada usuario puede crear passkeys en **Mi cuenta** y entrar con «Entrar con passkey», sin escribir usuario ni contraseña. Tras entrar con contraseña, la aplicación le propone crear una. El administrador puede quitar las passkeys de un usuario (p. ej. si pierde el móvil).

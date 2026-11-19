@@ -1,5 +1,10 @@
 # Cambios
 
+## 1.4.0
+
+- **Integraciones**: nueva pestaña Usuarios › Integraciones para crear tokens de solo lectura. Permiten que otra aplicación lea los envíos, empresas, vehículos y conductores, por ejemplo el plugin «Gestor DeCA» de Facturador para facturar los envíos. Cada token se muestra una vez, se guarda solo su hash, queda en la auditoría y se puede revocar al momento.
+- API de integración: `GET /api/integracion/v1/estado`, `/envios` (filtros por fechas, tipo y estado), `/empresas`, `/vehiculos` y `/conductores`, con `Authorization: Bearer <token>` y un límite de 120 peticiones por minuto.
+
 ## 1.3.0
 
 - Passkeys (WebAuthn): acceso sin contraseña desde «Entrar con passkey»; gestión en la nueva página «Mi cuenta»; el administrador puede quitar las passkeys de un usuario.

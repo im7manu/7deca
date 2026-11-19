@@ -14,6 +14,9 @@ services:
       - BASE_URL=https://tudominio.com
       - TRUST_PROXY=1          # detrás de Caddy/nginx: IP real de los usuarios
       - TZ=Europe/Madrid       # hora local (avisos e instalación nocturna de actualizaciones)
+      # - WHATSAPP_API=http://host.docker.internal:8765   # puente de WhatsApp para recuperar contraseñas
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"             # si el puente de WhatsApp está en el propio servidor
     ports:
       - "127.0.0.1:3000:3000"
     volumes:

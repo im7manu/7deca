@@ -7,11 +7,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { crearActualizador } = require('./actualizaciones');
+const { crearSeguridad } = require('./seguridad');
 const PKG = require('./package.json');
 
 const PORT = Number(process.env.PORT || 9000);
 const BASE = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
-const DATA = path.join(__dirname, 'data');
+const DATA = process.env.DECA_DATA ? path.resolve(process.env.DECA_DATA) : path.join(__dirname, 'data');
 fs.mkdirSync(DATA, { recursive: true });
 fs.mkdirSync(path.join(DATA, 'pdf'), { recursive: true });
 
@@ -463,7 +464,8 @@ app.get('/api/qr', (req, res) => {
 
 // Comprobación de estado de instalación inicial (Setup)
 app.get('/api/setup-status', (_, res) => {
-  res.json({ needsSetup: isSetupNeeded() });
+  const c = seguridad.config();
+  res.json({ needsSetup: isSetupNeeded(), recuperacion: c.whatsapp, passkeys: true });
 });
 
 // Registro inicial y configuración de primer arranque (Wizard)
@@ -536,17 +538,11 @@ app.post('/api/setup', (req, res) => {
         .run(JSON.stringify(emp));
     }
 
-    const sid = crypto.randomBytes(32).toString('hex');
-    const expira = Date.now() + 12 * 36e5;
-    db.prepare('INSERT INTO sesiones(sid, uid, expira, ip, creado) VALUES(?,?,?,?,?)')
-      .run(sid, adminId, expira, ip, Date.now());
-
     logAudit(usuario, ip, 'SETUP_COMPLETADO', 'Registro inicial del superadministrador y puesta en marcha del sistema.', 'critico');
 
     db.exec('COMMIT');
 
-    const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || BASE.startsWith('https://');
-    res.set('Set-Cookie', `sid=${sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${isSecure ? '; Secure' : ''}`);
+    abrirSesion(req, res, { id: adminId });
     res.json({ ok: 1, usuario, nombre, rol: 'admin' });
   } catch (err) {
     try { db.exec('ROLLBACK'); } catch {}
@@ -567,6 +563,21 @@ const can = (u, p) => !!u && (u.rol === 'admin' || u.permisos.includes(p));
 const need = p => (req, res, next) => can(req.u, p) ? next() : res.status(403).json({ error: 'No tienes permiso para esta acción.' });
 const adm = (req, res, next) => req.u?.rol === 'admin' ? next() : res.status(403).json({ error: 'Acceso restringido a administradores.' });
 
+// Crea una sesión nueva (256 bits, 12 horas) y la entrega en una cookie HttpOnly
+function abrirSesion(req, res, u) {
+  const now = Date.now();
+  db.prepare('DELETE FROM sesiones WHERE expira<?').run(now);
+  const sid = crypto.randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO sesiones(sid, uid, expira, ip, creado) VALUES(?,?,?,?,?)')
+    .run(sid, u.id, now + 12 * 36e5, req.ip || req.socket.remoteAddress || '', now);
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || BASE.startsWith('https://');
+  res.set('Set-Cookie', `sid=${sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${isSecure ? '; Secure' : ''}`);
+  return sid;
+}
+
+// Teléfono verificado por WhatsApp, recuperación de contraseña y passkeys (ver seguridad.js)
+const seguridad = crearSeguridad({ db, BASE, logAudit: (...a) => logAudit(...a), hash, okPw, validatePassword, abrirSesion });
+
 // Middleware de identificación de usuario por cookie de sesión HttpOnly
 app.use((req, res, next) => {
   const sid = cookie(req).sid || '';
@@ -578,6 +589,7 @@ app.use((req, res, next) => {
   `).get(sid, Date.now());
   if (r) {
     req.u = { ...r, permisos: JSON.parse(r.permisos || '[]') };
+    req.sid = sid;
   }
   next();
 });
@@ -621,7 +633,7 @@ app.post('/api/login', (req, res) => {
     dummyVerify(clave);
     const minRestantes = Math.ceil((u.bloqueado_hasta - now) / 60000);
     logAudit(usuario, ip, 'LOGIN_BLOQUEADO_TEMPORAL', `Cuenta bloqueada temporalmente (${minRestantes} min restantes)`, 'alerta');
-    return res.status(429).json({ error: `Cuenta bloqueada temporalmente por intentos fallidos. Inténtalo de nuevo en ${minRestantes} minuto(s).` });
+    return res.status(429).json({ error: `Cuenta bloqueada temporalmente por intentos fallidos. Inténtalo de nuevo en ${minRestantes} minuto(s), entra con tu passkey o restablece la contraseña.`, bloqueada: true });
   }
 
   // Verificación de contraseña
@@ -644,18 +656,9 @@ app.post('/api/login', (req, res) => {
     .run(new Date().toISOString(), ip, u.id);
   resetIpAttempts(ip);
 
-  // Limpieza de sesiones expiradas
-  db.prepare('DELETE FROM sesiones WHERE expira<?').run(now);
-
-  // Creación de identificador de sesión seguro (256 bits)
-  const sid = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sesiones(sid, uid, expira, ip, creado) VALUES(?,?,?,?,?)')
-    .run(sid, u.id, now + 12 * 36e5, ip, now);
-
+  abrirSesion(req, res, u);
   logAudit(usuario, ip, 'LOGIN_EXITOSO', 'Inicio de sesión correcto en la plataforma');
-
-  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || BASE.startsWith('https://');
-  res.set('Set-Cookie', `sid=${sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${isSecure ? '; Secure' : ''}`).json({ ok: 1 });
+  res.json({ ok: 1, passkeys: seguridad.numPasskeys(u.id) });
 });
 
 // Cierre de Sesión
@@ -670,10 +673,13 @@ app.post('/api/logout', (req, res) => {
   res.set('Set-Cookie', 'sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0').json({ ok: 1 });
 });
 
+seguridad.rutasPublicas(app);
+
 // ----------------------------------------------------
 // RUTAS PROTEGIDAS (REQUIEREN AUTENTICACIÓN)
 // ----------------------------------------------------
 app.use('/api', (req, res, next) => req.u ? next() : res.status(401).json({ error: 'Sesión expirada o no iniciada.' }));
+seguridad.rutasPrivadas(app);
 
 // Perfil del usuario conectado
 app.get('/api/yo', (req, res) => res.json({
@@ -681,6 +687,11 @@ app.get('/api/yo', (req, res) => res.json({
   nombre: req.u.nombre,
   email: req.u.email || '',
   rol: req.u.rol,
+  telefono: seguridad.ocultarTelefono(req.u.telefono),
+  telefono_verificado: !!req.u.telefono_verificado,
+  verificar_telefono: seguridad.debeVerificar(req.u),
+  whatsapp: seguridad.config().whatsapp,
+  passkeys: seguridad.numPasskeys(req.u.id),
   permisos: Object.keys(PERMISOS).filter(p => can(req.u, p)),
   asignados: Number(db.prepare("SELECT count(*) AS c FROM docs WHERE asignado=?").get(req.u.id)?.c || 0),
   PERMISOS,
@@ -728,6 +739,10 @@ const limpio = u => ({
   creado_en: u.creado_en || '',
   ultimo_login: u.ultimo_login || '',
   ultimo_login_ip: u.ultimo_login_ip || '',
+  telefono: u.telefono ? '+' + u.telefono : '',
+  telefono_verificado: !!u.telefono_verificado,
+  passkeys: seguridad.numPasskeys(u.id),
+  bloqueado: (u.bloqueado_hasta || 0) > Date.now(),
 });
 const otroAdmin = id => db.prepare("SELECT 1 FROM usuarios WHERE rol='admin' AND activo=1 AND id<>?").get(id);
 
@@ -742,6 +757,8 @@ app.post('/api/usuarios', adm, (req, res) => {
   const rol = b.rol === 'admin' ? 'admin' : 'usuario';
   const activo = b.activo === false ? 0 : 1;
   const permisos = JSON.stringify((b.permisos || []).filter(p => PERMISOS[p]));
+  const telefono = b.telefono === undefined ? null : (String(b.telefono).trim() ? seguridad.normalizarTelefono(b.telefono) : '');
+  if (telefono === '' && String(b.telefono || '').trim()) return res.status(400).json({ error: 'El teléfono no es válido.' });
 
   if (!usuario || !nombre) return res.status(400).json({ error: 'Faltan el usuario y el nombre completo.' });
   if (!/^[a-z0-9_-]{3,30}$/.test(usuario)) {
@@ -761,9 +778,15 @@ app.post('/api/usuarios', adm, (req, res) => {
       }
       db.prepare('UPDATE usuarios SET usuario=?,nombre=?,email=?,rol=?,permisos=?,activo=? WHERE id=?')
         .run(usuario, nombre, email, rol, permisos, activo, id);
+      // Si el administrador cambia el teléfono, el usuario tendrá que verificarlo de nuevo al entrar
+      const previo = db.prepare('SELECT telefono FROM usuarios WHERE id=?').get(id);
+      if (telefono !== null && telefono !== (previo?.telefono || '')) {
+        db.prepare('UPDATE usuarios SET telefono=?, telefono_verificado=0 WHERE id=?').run(telefono, id);
+      }
+      if (b.desbloquear) db.prepare('UPDATE usuarios SET intentos_fallidos=0, bloqueado_hasta=0 WHERE id=?').run(id);
 
       if (clave) {
-        db.prepare('UPDATE usuarios SET hash=? WHERE id=?').run(hash(clave), id);
+        db.prepare('UPDATE usuarios SET hash=?, intentos_fallidos=0, bloqueado_hasta=0 WHERE id=?').run(hash(clave), id);
       }
       if (!activo || clave) {
         db.prepare('DELETE FROM sesiones WHERE uid=?').run(id);
@@ -772,9 +795,9 @@ app.post('/api/usuarios', adm, (req, res) => {
     } else {
       const ahora = new Date().toISOString();
       db.prepare(`
-        INSERT INTO usuarios(usuario,nombre,email,hash,rol,permisos,activo,creado_en)
-        VALUES(?,?,?,?,?,?,?,?)
-      `).run(usuario, nombre, email, hash(clave), rol, permisos, activo, ahora);
+        INSERT INTO usuarios(usuario,nombre,email,hash,rol,permisos,activo,creado_en,telefono)
+        VALUES(?,?,?,?,?,?,?,?,?)
+      `).run(usuario, nombre, email, hash(clave), rol, permisos, activo, ahora, telefono || '');
       logAudit(req.u.usuario, req.ip, 'USUARIO_CREADO', `Alta del usuario ${usuario} con rol ${rol}`);
     }
     res.json({ ok: 1 });
@@ -791,9 +814,20 @@ app.delete('/api/usuarios/:id', adm, (req, res) => {
   const u = db.prepare('SELECT usuario FROM usuarios WHERE id=?').get(id);
   db.prepare('DELETE FROM sesiones WHERE uid=?').run(id);
   db.prepare('UPDATE docs SET asignado=NULL WHERE asignado=?').run(id);
+  seguridad.borrarPasskeys(id);
   db.prepare('DELETE FROM usuarios WHERE id=?').run(id);
   logAudit(req.u.usuario, req.ip, 'USUARIO_ELIMINADO', `Eliminación del usuario ${u?.usuario || id}`);
   res.json({ ok: 1 });
+});
+
+// Quitar todas las passkeys de un usuario (p. ej. si ha perdido el móvil)
+app.delete('/api/usuarios/:id/passkeys', adm, (req, res) => {
+  const id = Number(req.params.id);
+  const u = db.prepare('SELECT usuario FROM usuarios WHERE id=?').get(id);
+  if (!u) return res.status(404).json({ error: 'Usuario no encontrado.' });
+  const n = seguridad.borrarPasskeys(id);
+  logAudit(req.u.usuario, req.ip, 'PASSKEYS_REVOCADAS', `${n} passkey(s) del usuario ${u.usuario} eliminadas por el administrador`, 'aviso');
+  res.json({ ok: 1, eliminadas: n });
 });
 
 // Clientes (compatibilidad)
@@ -1125,8 +1159,17 @@ app.post('/api/actualizaciones/instalar', adm, async (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.put('/api/actualizaciones/config', adm, (req, res) => {
-  actualizador.setAuto(!!req.body?.auto);
-  logAudit(req.u.usuario, req.ip, 'ACTUALIZACION_CONFIG', `Instalación automática ${req.body?.auto ? 'activada' : 'desactivada'}`);
+  const b = req.body || {};
+  try {
+    if (b.inicio !== undefined || b.fin !== undefined) {
+      actualizador.setHorario(b.inicio, b.fin);
+      logAudit(req.u.usuario, req.ip, 'ACTUALIZACION_CONFIG', `Horario de instalación automática: de ${b.inicio}:00 a ${b.fin}:00`);
+    }
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  if (b.auto !== undefined) {
+    actualizador.setAuto(!!b.auto);
+    logAudit(req.u.usuario, req.ip, 'ACTUALIZACION_CONFIG', `Instalación automática ${b.auto ? 'activada' : 'desactivada'}`);
+  }
   res.json(actualizador.estado());
 });
 app.get('/api/actualizaciones/copias/:id/db', adm, (req, res) => {
@@ -1176,8 +1219,9 @@ app.use((err, req, res, next) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`DeCA y eCMR activo en http://localhost:${PORT}`);
+  // HOST=127.0.0.1 limita las conexiones al propio equipo (p. ej. con network_mode: host detrás de Caddy)
+  app.listen(PORT, process.env.HOST || undefined, () => {
+    console.log(`DeCA y eCMR activo en http://${process.env.HOST || 'localhost'}:${PORT}`);
     console.log(`URL base para códigos QR: ${BASE}`);
     console.log(`Versión ${PKG.version}${process.env.DECA_SUPERVISADO === '1' ? ' (con supervisor: actualizaciones activas)' : ' (sin supervisor: arranca con «npm start» para poder instalar actualizaciones)'}`);
     actualizador.alArrancar();

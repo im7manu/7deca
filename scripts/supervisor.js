@@ -16,7 +16,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const DATA = path.join(ROOT, 'data');
+// Igual que server.js: DECA_DATA permite guardar los datos fuera de la carpeta de la aplicación
+const DATA = process.env.DECA_DATA ? path.resolve(process.env.DECA_DATA) : path.join(ROOT, 'data');
 const ESTADO = path.join(DATA, 'actualizacion.json');
 const MANIFIESTO = path.join(ROOT, '.archivos-instalados.json');
 const EXIT_ACTUALIZAR = 75;

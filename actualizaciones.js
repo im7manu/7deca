@@ -2,8 +2,11 @@
 //
 // Flujo seguro:
 //  1. buscar(): consulta la última Release publicada (no borradores ni pre-releases) del repositorio configurado.
-//  2. instalar(): descarga el código en data/actualizaciones/<versión>, lo verifica (nombre, versión, sintaxis,
-//     versión de Node) y prepara sus dependencias allí. La aplicación sigue funcionando mientras tanto.
+//     Solo se ofrecen versiones que incluyan el paquete gestor-deca-ecmr-<versión>.tar.gz y su firma .sig.
+//  2. instalar(): descarga el paquete, comprueba su firma Ed25519 con la clave pública incluida en la aplicación
+//     (clave-actualizaciones.pem) y lo rechaza si no cuadra. Después lo extrae en data/actualizaciones/<versión>,
+//     lo verifica (nombre, versión, sintaxis, versión de Node) y prepara sus dependencias (el paquete ya las trae).
+//     La aplicación sigue funcionando mientras tanto.
 //  3. Copia de seguridad de la base de datos en data/copias/<fecha>-<de>-a-<a>/.
 //  4. Se escribe data/actualizacion.json con estado «lista» y el servidor termina con el código 75.
 //  5. El supervisor (scripts/supervisor.js, que sigue ejecutando el código antiguo) mueve el código actual a la
@@ -12,6 +15,7 @@
 //
 // La carpeta data/ (base de datos y PDF) nunca se sustituye.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync, spawn } = require('child_process');
@@ -19,6 +23,8 @@ const { spawnSync, spawn } = require('child_process');
 const EXIT_ACTUALIZAR = 75;
 const PROTEGIDOS = new Set(['data', '.git', '.env', 'node_modules']);
 const NOMBRE_ESTADO = 'actualizacion.json';
+// Rutas peligrosas dentro de un paquete: absolutas, con unidad (C:), con \ o que suben de carpeta
+const rutaPeligrosa = e => e.startsWith('/') || /^[a-z]:/i.test(e) || e.includes('\\') || e.split('/').includes('..');
 
 const cmpVer = (a, b) => {
   const pa = String(a).replace(/^v/, '').split(/[.-]/).slice(0, 3).map(n => parseInt(n, 10) || 0);
@@ -42,6 +48,17 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
   const FICH_ESTADO = path.join(DATA, NOMBRE_ESTADO);
   const MAX_COPIAS = Number(process.env.UPDATE_KEEP_BACKUPS || 3);
   const SALUD_S = Number(process.env.UPDATE_HEALTH_SECONDS || 60);
+
+  const clavePublica = () => {
+    const pem = process.env.UPDATE_PUBKEY || (() => { try { return fs.readFileSync(path.join(ROOT, 'clave-actualizaciones.pem'), 'utf8'); } catch { return null; } })();
+    try { return pem ? crypto.createPublicKey(pem) : null; } catch { return null; }
+  };
+  const horario = () => {
+    const h = getCfg('horario', { inicio: 3, fin: 5 });
+    const ok = n => Number.isInteger(n) && n >= 0 && n <= 23;
+    return ok(h.inicio) && ok(h.fin) && h.inicio !== h.fin ? h : { inicio: 3, fin: 5 };
+  };
+  const enHorario = (hora, { inicio, fin }) => (inicio < fin ? hora >= inicio && hora < fin : hora >= inicio || hora < fin);
 
   // Solo se descargan actualizaciones por HTTPS (http solo se admite en local, para pruebas)
   const apiOk = /^https:\/\//.test(API) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(API);
@@ -77,8 +94,12 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
       const rel = await r.json();
       const ver = String(rel.tag_name || '').replace(/^v/, '');
       if (!/^\d+\.\d+\.\d+$/.test(ver)) throw new Error(`La última versión publicada tiene una etiqueta no válida: ${rel.tag_name}`);
-      disponible = cmpVer(ver, version) > 0 && !rel.draft && !rel.prerelease
-        ? { version: ver, tag: rel.tag_name, nombre: rel.name || rel.tag_name, fecha: rel.published_at, notas: String(rel.body || '').slice(0, 8000), url: rel.html_url, tarball: rel.tarball_url }
+      const paquete = (rel.assets || []).find(a => a.name === `${nombre}-${ver}.tar.gz`);
+      const firma = (rel.assets || []).find(a => a.name === `${nombre}-${ver}.tar.gz.sig`);
+      const nueva = cmpVer(ver, version) > 0 && !rel.draft && !rel.prerelease;
+      if (nueva && (!paquete || !firma)) throw new Error(`La versión ${ver} no incluye el paquete firmado; no se instalará.`);
+      disponible = nueva
+        ? { version: ver, tag: rel.tag_name, nombre: rel.name || rel.tag_name, fecha: rel.published_at, notas: String(rel.body || '').slice(0, 8000), url: rel.html_url, paquete: paquete.browser_download_url, firma: firma.browser_download_url, tamano: paquete.size }
         : null;
       errorComprobacion = '';
       if (disponible && usuario !== 'sistema') logAudit(usuario, '', 'ACTUALIZACION_DISPONIBLE', `Versión ${ver} disponible (instalada ${version})`);
@@ -117,6 +138,7 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
 
   async function instalar(usuario = 'sistema', ip = '') {
     if (DESACTIVADO) throw new Error('Las actualizaciones están desactivadas en este servidor (UPDATE_DISABLED=1).');
+    if (!clavePublica()) throw new Error('Falta la clave pública de las actualizaciones (clave-actualizaciones.pem): no se pueden comprobar las firmas.');
     if (!SUPERVISADO) throw new Error('Para instalar actualizaciones, la aplicación debe arrancarse con «npm start» (incluye el supervisor que la reinicia y la restaura si algo falla).');
     if (progreso && !progreso.error) throw new Error('Ya hay una actualización en curso.');
     const rel = disponible || await buscar(usuario);
@@ -129,25 +151,39 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
       const staging = path.join(DIR_STAGING, `${rel.version}-${stamp}`);
       try {
         fs.mkdirSync(staging, { recursive: true });
-        // 1. Descarga
-        const r = await gh(rel.tarball, { timeout: 5 * 60e3 });
-        if (!r.ok) throw new Error(`No se pudo descargar la versión (${r.status}).`);
-        const buf = Buffer.from(await r.arrayBuffer());
-        if (buf.length < 1000 || buf.length > 200 * 1024 * 1024) throw new Error('El archivo descargado tiene un tamaño anómalo.');
+        // 1. Descarga del paquete y de su firma
+        const descargar = async (u, max) => {
+          const r = await gh(u, { timeout: 5 * 60e3, headers: { Accept: 'application/octet-stream' } });
+          if (!r.ok) throw new Error(`No se pudo descargar la versión (${r.status}).`);
+          const b = Buffer.from(await r.arrayBuffer());
+          if (b.length > max) throw new Error('El archivo descargado tiene un tamaño anómalo.');
+          return b;
+        };
+        const [buf, sig] = await Promise.all([descargar(rel.paquete, 200 * 1024 * 1024), descargar(rel.firma, 10000)]);
+        if (buf.length < 1000) throw new Error('El archivo descargado tiene un tamaño anómalo.');
+        // 2. Firma digital: si no cuadra con la clave pública de la aplicación, se rechaza sin abrir el paquete
+        progreso.fase = 'Comprobando la firma digital';
+        let firmaOk = false;
+        try { firmaOk = crypto.verify(null, buf, clavePublica(), Buffer.from(sig.toString('utf8').trim(), 'base64')); } catch {}
+        if (!firmaOk) throw new Error('La firma digital del paquete no es válida: actualización rechazada.');
         const tgz = path.join(staging, 'paquete.tar.gz');
         fs.writeFileSync(tgz, buf);
-        // 2. Extracción (tar está incluido en Linux, macOS y Windows 10+)
+        // 3. Extracción (tar está incluido en Linux, macOS y Windows 10+)
         progreso.fase = 'Comprobando la nueva versión';
+        const lista = spawnSync('tar', ['-tzf', tgz], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+        if (lista.status !== 0) throw new Error('No se pudo leer el paquete de la actualización.');
+        const peligrosa = lista.stdout.split('\n').filter(Boolean).find(rutaPeligrosa);
+        if (peligrosa) throw new Error(`El paquete contiene una ruta no permitida: ${peligrosa}`);
         const ext = path.join(staging, 'extraido');
         fs.mkdirSync(ext);
         const t = spawnSync('tar', ['-xzf', tgz, '-C', ext], { encoding: 'utf8' });
         if (t.status !== 0) throw new Error('No se pudo descomprimir la actualización: ' + (t.stderr || t.error?.message || ''));
         fs.unlinkSync(tgz);
-        // Las descargas de GitHub contienen una única carpeta (y a veces un archivo pax_global_header)
+        // El paquete contiene una única carpeta
         const top = fs.readdirSync(ext).filter(n => fs.statSync(path.join(ext, n)).isDirectory());
         if (top.length !== 1) throw new Error('El paquete descargado no tiene el formato esperado.');
         const nuevo = path.join(ext, top[0]);
-        // 3. Verificación
+        // 4. Verificación
         revisarArbol(nuevo);
         const pkgFile = path.join(nuevo, 'package.json');
         if (!fs.existsSync(pkgFile) || !fs.existsSync(path.join(nuevo, 'server.js'))) throw new Error('Al paquete le faltan archivos esenciales (package.json o server.js).');
@@ -156,17 +192,21 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
         if (pkg.version !== rel.version) throw new Error(`La versión del paquete (${pkg.version}) no coincide con la publicada (${rel.version}).`);
         if (cmpVer(pkg.version, version) <= 0) throw new Error('El paquete no es más reciente que la versión instalada.');
         if (!cumpleNode(pkg.engines?.node)) throw new Error(`La nueva versión necesita Node ${pkg.engines.node} y este servidor tiene ${process.versions.node}. Actualiza Node antes de continuar.`);
-        for (const f of ['server.js', 'actualizaciones.js', 'scripts/supervisor.js']) {
+        for (const f of ['server.js', 'actualizaciones.js', 'seguridad.js', 'scripts/supervisor.js']) {
           const fp = path.join(nuevo, f);
           if (!fs.existsSync(fp)) continue;
           const c = spawnSync(process.execPath, ['--check', fp], { encoding: 'utf8' });
           if (c.status !== 0) throw new Error(`El archivo ${f} de la nueva versión tiene errores: ${(c.stderr || '').split('\n').slice(0, 4).join(' ')}`);
         }
+        const traeDeps = fs.existsSync(path.join(nuevo, 'node_modules'));
         for (const p of PROTEGIDOS) if (p !== 'node_modules' && fs.existsSync(path.join(nuevo, p))) fs.rmSync(path.join(nuevo, p), { recursive: true, force: true });
-        // 4. Dependencias: si no cambian se copian las actuales; si cambian se instalan en la carpeta temporal
+        // 5. Dependencias: el paquete firmado ya las incluye. Si no las trajera: si no cambian se copian las
+        //    actuales; si cambian se instalan en la carpeta temporal
         const lockNuevo = path.join(nuevo, 'package-lock.json'), lockActual = path.join(ROOT, 'package-lock.json');
         const mismas = fs.existsSync(lockNuevo) && fs.existsSync(lockActual) && fs.readFileSync(lockNuevo, 'utf8') === fs.readFileSync(lockActual, 'utf8') && fs.existsSync(path.join(ROOT, 'node_modules'));
-        if (mismas) {
+        if (traeDeps) {
+          // nada que hacer
+        } else if (mismas) {
           progreso.fase = 'Preparando las dependencias';
           fs.cpSync(path.join(ROOT, 'node_modules'), path.join(nuevo, 'node_modules'), { recursive: true, verbatimSymlinks: true });
         } else {
@@ -174,7 +214,7 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
           const { cmd, shell } = npmCmd();
           await ejecutar(cmd, fs.existsSync(lockNuevo) ? ['ci', '--omit=dev'] : ['install', '--omit=dev'], nuevo, shell);
         }
-        // 5. Copia de seguridad de la base de datos
+        // 6. Copia de seguridad de la base de datos
         progreso.fase = 'Haciendo la copia de seguridad';
         // Se registra antes de copiar la base de datos para que el apunte sobreviva a una posible restauración
         logAudit(usuario, ip, 'ACTUALIZACION_PREPARADA', `Versión ${rel.version} descargada y verificada. Copia de seguridad y reinicio.`, 'aviso');
@@ -182,7 +222,7 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
         fs.mkdirSync(copia, { recursive: true });
         db.exec(`VACUUM INTO '${path.join(copia, 'app.db').replace(/'/g, "''")}'`);
         fs.writeFileSync(path.join(copia, 'info.json'), JSON.stringify({ fecha: new Date().toISOString(), desde: version, hasta: rel.version, por: usuario }, null, 2));
-        // 6. Se deja todo listo para que el supervisor haga el cambio
+        // 7. Se deja todo listo para que el supervisor haga el cambio
         progreso.fase = 'Reiniciando la aplicación';
         escribirEstado({ estado: 'lista', desde: version, hasta: rel.version, staging: nuevo, copia, carpetaTemporal: staging, por: usuario, fecha: new Date().toISOString(), saludSegundos: SALUD_S });
         setTimeout(() => process.exit(EXIT_ACTUALIZAR), 800);
@@ -248,8 +288,7 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
     const ciclo = async () => {
       try {
         await buscar();
-        const h = new Date().getHours();
-        if (disponible && getCfg('auto', false) && SUPERVISADO && h >= 3 && h < 5 && !progreso) await instalar('sistema (automática)');
+        if (disponible && getCfg('auto', false) && SUPERVISADO && enHorario(new Date().getHours(), horario()) && !progreso) await instalar('sistema (automática)');
       } catch (e) { /* se muestra en el panel */ }
     };
     setTimeout(ciclo, 60e3).unref();
@@ -259,14 +298,21 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
   function estado() {
     const st = leerEstado();
     return {
-      version, repo: REPO, supervisado: SUPERVISADO, desactivado: DESACTIVADO, auto: !!getCfg('auto', false),
+      version, repo: REPO, supervisado: SUPERVISADO, desactivado: DESACTIVADO, auto: !!getCfg('auto', false), horario: horario(), firma: !!clavePublica(),
       ultimaComprobacion, error: errorComprobacion, disponible, progreso,
       ultimo: st ? { estado: st.estado, desde: st.desde, hasta: st.hasta, fecha: st.completada || st.fecha, motivo: st.motivo || '' } : null,
       copias: listarCopias(),
     };
   }
 
-  return { buscar, instalar, estado, alArrancar, programar, rutaCopia, setAuto: v => setCfg('auto', !!v), hayAviso: () => {
+  const setHorario = (inicio, fin) => {
+    inicio = Number(inicio); fin = Number(fin);
+    const ok = n => Number.isInteger(n) && n >= 0 && n <= 23;
+    if (!ok(inicio) || !ok(fin) || inicio === fin) throw new Error('El horario de instalación no es válido.');
+    setCfg('horario', { inicio, fin });
+  };
+
+  return { buscar, instalar, estado, alArrancar, programar, rutaCopia, setAuto: v => setCfg('auto', !!v), setHorario, enHorario, hayAviso: () => {
     const st = leerEstado();
     if (st && st.estado === 'revertida' && Date.now() - new Date(st.revertida || st.fecha).getTime() < 7 * 864e5) return { nivel: 'crit', titulo: `La actualización a ${st.hasta} falló y se restauró la ${st.desde}`, detalle: 'Revisa el registro en Usuarios › Actualizaciones.' };
     if (disponible && !(getCfg('auto', false) && SUPERVISADO)) return { nivel: 'warn', titulo: `Nueva versión disponible: ${disponible.version}`, detalle: 'Instálala desde Usuarios › Actualizaciones.' };

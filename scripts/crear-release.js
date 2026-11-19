@@ -16,7 +16,7 @@ const salida = path.join(raiz, 'release');
 const trabajo = fs.mkdtempSync(path.join(os.tmpdir(), 'deca-release-'));
 const destino = path.join(trabajo, NOMBRE);
 
-const ARCHIVOS = ['server.js', 'actualizaciones.js', 'seguridad.js', 'clave-actualizaciones.pem', 'public', 'scripts', 'docs',
+const ARCHIVOS = ['server.js', 'actualizaciones.js', 'seguridad.js', 'integracion.js', 'clave-actualizaciones.pem', 'public', 'scripts', 'docs',
   'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'icon.svg', 'manifest.webmanifest', 'Dockerfile',
   'docker-compose.example.yml', '.dockerignore', '.gitignore'];
 

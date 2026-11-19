@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { crearActualizador } = require('./actualizaciones');
 const { crearSeguridad } = require('./seguridad');
+const { crearIntegracion } = require('./integracion');
 const PKG = require('./package.json');
 
 const PORT = Number(process.env.PORT || 9000);
@@ -674,12 +675,15 @@ app.post('/api/logout', (req, res) => {
 });
 
 seguridad.rutasPublicas(app);
+// API de integración con token (solo lectura), p. ej. para el plugin «Gestor DeCA» de Facturador
+const rutasAdminIntegracion = crearIntegracion({ db, logAudit: (...a) => logAudit(...a), normDatos, num, url, version: PKG.version, ajustes }).rutas(app, adm);
 
 // ----------------------------------------------------
 // RUTAS PROTEGIDAS (REQUIEREN AUTENTICACIÓN)
 // ----------------------------------------------------
 app.use('/api', (req, res, next) => req.u ? next() : res.status(401).json({ error: 'Sesión expirada o no iniciada.' }));
 seguridad.rutasPrivadas(app);
+rutasAdminIntegracion();
 
 // Perfil del usuario conectado
 app.get('/api/yo', (req, res) => res.json({

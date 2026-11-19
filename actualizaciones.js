@@ -192,7 +192,7 @@ function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
         if (pkg.version !== rel.version) throw new Error(`La versión del paquete (${pkg.version}) no coincide con la publicada (${rel.version}).`);
         if (cmpVer(pkg.version, version) <= 0) throw new Error('El paquete no es más reciente que la versión instalada.');
         if (!cumpleNode(pkg.engines?.node)) throw new Error(`La nueva versión necesita Node ${pkg.engines.node} y este servidor tiene ${process.versions.node}. Actualiza Node antes de continuar.`);
-        for (const f of ['server.js', 'actualizaciones.js', 'seguridad.js', 'scripts/supervisor.js']) {
+        for (const f of ['server.js', 'actualizaciones.js', 'seguridad.js', 'integracion.js', 'scripts/supervisor.js']) {
           const fp = path.join(nuevo, f);
           if (!fs.existsSync(fp)) continue;
           const c = spawnSync(process.execPath, ['--check', fp], { encoding: 'utf8' });

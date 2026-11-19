@@ -4,3 +4,6 @@ data
 .git
 .env
 docs
+release
+test
+.github

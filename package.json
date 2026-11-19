@@ -1,18 +1,21 @@
 {
   "name": "deca-ecmr",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Gestión DeCA y eCMR creado con <3 por its7manu.",
   "main": "server.js",
   "scripts": {
     "start": "node scripts/supervisor.js",
     "start:server": "node server.js",
-    "start:local": "node scripts/start-local.mjs"
+    "start:local": "node scripts/start-local.mjs",
+    "test": "node --test test/*.test.js",
+    "release": "node scripts/crear-release.js"
   },
   "engines": {
     "node": ">=22.13"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^13.3.3",
     "express": "^5.2.1",
     "pdfkit": "^0.20.2",
     "qrcode": "^1.5.4"

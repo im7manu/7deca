@@ -49,7 +49,10 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 | **Criptografía de Contraseñas** | Algoritmo `scrypt` (coste de memoria y CPU `N: 16384, r: 8, p: 1`) con sal aleatoria de 32 bytes (`crypto.randomBytes(32)`) y clave derivada de 64 bytes. | Cracking por fuerza bruta, diccionarios, tablas arcoíris y aceleradores GPU/ASIC. |
 | **Mitigación de Timing Attacks** | Verificación constante contra hash ficticio en intentos de login con usuarios inexistentes y comparación en tiempo constante con `crypto.timingSafeEqual`. | Enumeración de usuarios por análisis de tiempos de respuesta en red. |
 | **Política Estricta de Contraseñas** | Mínimo 10 caracteres obligatorios con mayúsculas, minúsculas, dígitos y símbolos tanto en setup inicial como en creación/edición de usuarios. | Contraseñas triviales o fáciles de adivinar. |
-| **Protección Anti-Fuerza Bruta** | Bloqueo temporal de cuentas tras 5 intentos fallidos (15 minutos) y limitación de tasa por dirección IP en memoria. | Ataques masivos de adivinación de contraseñas. |
+| **Protección Anti-Fuerza Bruta** | Bloqueo temporal de cuentas tras 5 intentos fallidos (15 minutos) y limitación de tasa por dirección IP en memoria. El bloqueo no impide entrar con passkey ni restablecer la contraseña por WhatsApp. | Ataques masivos de adivinación de contraseñas. |
+| **Passkeys (WebAuthn)** | Acceso sin contraseña con la huella, la cara o el PIN del dispositivo (credenciales detectables, `@simplewebauthn/server`). La clave privada nunca sale del dispositivo. | Phishing, robo y reutilización de contraseñas. |
+| **Recuperación por WhatsApp** | Código de 6 cifras al teléfono verificado: 10 minutos de validez, 5 intentos, solo se guarda su hash, un envío por minuto y 5 por hora. Misma respuesta exista o no el usuario. Aviso por WhatsApp cuando cambia la contraseña. | Cuentas bloqueadas sin salida y enumeración de usuarios. |
+| **Actualizaciones firmadas** | Los paquetes se firman con Ed25519 y la aplicación rechaza cualquiera cuya firma no cuadre con la clave pública incluida. | Instalación de código manipulado. |
 | **Gestión de Sesiones** | Identificadores de sesión criptográficos de 256 bits (`crypto.randomBytes(32)`). Cookies marcadas con `HttpOnly`, `SameSite=Lax` y `Secure` condicional. | Robo de sesión por XSS, fijación de sesión y secuestro. |
 | **Cabeceras HTTP Defensivas** | `Content-Security-Policy` restrictiva, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`. Ocultación de cabecera `X-Powered-By`. | Clickjacking, inyección XSS, sniffing MIME y ataques de canal lateral. |
 | **Defensa contra CSRF** | Validación estricta del origen (`Origin`/`Referer`) en todas las peticiones con métodos mutantes (`POST`, `PUT`, `PATCH`, `DELETE`). | Cross-Site Request Forgery desde páginas maliciosas externas. |
@@ -79,6 +82,32 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 - Los documentos PDF oficiales generados se almacenan en `data/pdf/<token>.pdf`.
 - La URL pública accesible mediante QR `/d/<token>` permite la comprobación en carretera por las autoridades de tráfico e inspección de transportes sin necesidad de credenciales.
 
+## Novedades de la versión 1.3.0
+
+- **Passkeys**: cada usuario puede crear passkeys en **Mi cuenta** y entrar con «Entrar con passkey», sin escribir usuario ni contraseña. Tras entrar con contraseña, la aplicación le propone crear una. El administrador puede quitar las passkeys de un usuario (p. ej. si pierde el móvil).
+- **Recuperar la contraseña por WhatsApp**: «¿Has olvidado tu contraseña?» envía un código al teléfono verificado del usuario. Con él se pone una contraseña nueva, se desbloquea la cuenta, se cierran las demás sesiones y se entra directamente.
+- **Teléfono verificado obligatorio**: si el servidor tiene WhatsApp configurado, cada usuario verifica su móvil con un código la próxima vez que entre. Hasta entonces no puede usar la aplicación.
+- **Mi cuenta**: nueva página para todos los usuarios con sus passkeys, su teléfono y el cambio de contraseña.
+- **Usuarios**: se ve el teléfono de cada usuario y si está verificado, sus passkeys y si la cuenta está bloqueada, con opción de desbloquearla al guardar.
+- **Actualizaciones firmadas** (Ed25519) y horario de instalación automática configurable.
+
+### Configurar WhatsApp
+
+Los mensajes se envían a través de un puente HTTP compatible con [whatsapp-mcp](https://github.com/lharries/whatsapp-mcp) (`POST /api/send` con `{ "recipient": "34600000000", "message": "…" }`) desde el número vinculado a ese puente.
+
+| Variable | Uso |
+|---|---|
+| `WHATSAPP_API` | Dirección del puente, p. ej. `http://127.0.0.1:8765`. Sin ella, la recuperación por WhatsApp no está disponible y no se exige verificar el teléfono. |
+| `WHATSAPP_EXIGIR=0` | Mantiene la recuperación por WhatsApp pero no obliga a verificar el teléfono. |
+| `RP_ID` / `RP_ORIGIN` | Solo si las passkeys deben usar un dominio distinto del de `BASE_URL`. |
+| `HOST` | Interfaz en la que escucha el servidor (p. ej. `127.0.0.1`). |
+
+Mensaje que recibe el usuario (y, aparte, el código solo, para copiarlo con una pulsación larga):
+
+> Este es tu código para restablecer la contraseña de Gestor DeCA eCMR: 286472. ¿No has sido tú? Ignora este mensaje.
+
+Las passkeys funcionan solo por HTTPS (o en `localhost`) y van ligadas al dominio de `BASE_URL`: si cambias de dominio, los usuarios tendrán que crearlas de nuevo.
+
 ## Novedades de la versión 1.2.0
 
 - **Asignar documentos a usuarios**: al crear un DeCA o eCMR (o después, con «Asignar»/«Reasignar») se puede elegir el usuario que hará el transporte. El administrador y quienes tienen permiso de ver o crear documentos siguen viéndolo todo; el usuario asignado, aunque no tenga ningún permiso, ve solo sus documentos y puede **cerrarlos él mismo** al terminar (no puede modificarlos, anularlos ni reasignarlos).
@@ -97,11 +126,11 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 
 ## 🔄 Actualizaciones
 
-La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/gestor-deca-ecmr`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática (de madrugada, entre las 3:00 y las 5:00).
+La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/gestor-deca-ecmr`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática en el horario que elijan (por defecto, de 3:00 a 5:00).
 
 **Cómo se instala sin riesgo:**
 
-1. Se descarga la versión nueva en `data/actualizaciones/` y se verifica: que es esta aplicación, que la versión coincide con la publicada y es más reciente, que el código no tiene errores de sintaxis, que no contiene enlaces simbólicos y que la versión de Node del servidor es suficiente. Después se preparan sus dependencias (se copian si no cambian, o se instalan con `npm ci`). Todo esto ocurre con la aplicación en marcha.
+1. Se descarga el paquete firmado de la versión nueva y se comprueba su **firma digital Ed25519** con la clave pública incluida en la aplicación (`clave-actualizaciones.pem`); si no cuadra, se rechaza sin abrirlo. Después se extrae en `data/actualizaciones/` y se verifica: que es esta aplicación, que la versión coincide con la publicada y es más reciente, que el código no tiene errores de sintaxis, que no contiene enlaces simbólicos y que la versión de Node del servidor es suficiente. Después se preparan sus dependencias (se copian si no cambian, o se instalan con `npm ci`). Todo esto ocurre con la aplicación en marcha.
 2. Se hace una **copia de seguridad** de la base de datos en `data/copias/<fecha>-<de>-a-<a>/`.
 3. La aplicación se reinicia. El **supervisor** (`scripts/supervisor.js`) guarda el código actual en esa misma copia y coloca el nuevo. La carpeta `data/` (base de datos y PDF) no se toca nunca.
 4. La nueva versión tiene un **periodo de prueba** (60 s). Si se cae o no responde durante ese periodo, el supervisor **restaura solo** el código y la base de datos anteriores; la base de datos de la versión fallida se guarda también en la copia.
@@ -132,11 +161,12 @@ El servicio necesita permiso de escritura sobre la carpeta de la aplicación (no
 
 **Cómo publicar una versión nueva:**
 
-1. Sube `version` en `package.json` (p. ej. `1.2.1`) y fusiona los cambios en `main`.
-2. En GitHub, crea una **Release** con la etiqueta `v1.2.1` (debe coincidir exactamente con `package.json`) y escribe las novedades en la descripción: es el texto que verán los administradores.
-3. Las instalaciones la detectarán en la siguiente comprobación (como mucho, una hora).
+1. Sube `version` en `package.json` (p. ej. `1.3.1`), añade las novedades a `CHANGELOG.md` y fusiona los cambios en `main`.
+2. Crea y sube la etiqueta: `git tag v1.3.1 && git push origin v1.3.1` (debe coincidir exactamente con `package.json`).
+3. El flujo de GitHub Actions «Publicar versión» pasa las pruebas, crea el paquete con `npm run release`, lo firma con el secreto `DECA_CLAVE_FIRMA` y publica la Release con `deca-ecmr-<versión>.tar.gz` y su `.sig`.
+4. Las instalaciones la detectarán en la siguiente comprobación (como mucho, una hora).
 
-Los borradores y las *pre-releases* se ignoran, así que puedes preparar una versión sin que se instale.
+Una Release sin paquete firmado no se instala. Los borradores y las *pre-releases* se ignoran. La clave privada de firma se guarda fuera del repositorio (`~/.gestor-deca/clave-firma-actualizaciones.pem`); si se pierde, hay que generar otra y publicar la nueva clave pública en una versión instalada a mano.
 
 **Variables de entorno opcionales:** `UPDATE_DISABLED=1` (desactiva las actualizaciones), `UPDATE_REPO` (otro repositorio), `UPDATE_HEALTH_SECONDS` (duración del periodo de prueba), `UPDATE_KEEP_BACKUPS` (número de copias que se conservan).
 

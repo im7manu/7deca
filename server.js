@@ -9,6 +9,7 @@ const os = require('os');
 const { crearActualizador } = require('./actualizaciones');
 const { crearSeguridad } = require('./seguridad');
 const { crearIntegracion } = require('./integracion');
+const { crearPlugins } = require('./plugins');
 const PKG = require('./package.json');
 
 const PORT = Number(process.env.PORT || 9000);
@@ -16,6 +17,24 @@ const BASE = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/,
 const DATA = process.env.DECA_DATA ? path.resolve(process.env.DECA_DATA) : path.join(__dirname, 'data');
 fs.mkdirSync(DATA, { recursive: true });
 fs.mkdirSync(path.join(DATA, 'pdf'), { recursive: true });
+
+// Restauración de una copia preparada por un plugin (p. ej. «Copias automáticas»): se aplica al arrancar, antes de abrir
+// la base de datos. Lo actual se aparta en data/antes-de-restaurar-<fecha>/ por si hubiera que deshacerla.
+{
+  const dirRest = path.join(DATA, 'restaurar');
+  if (fs.existsSync(path.join(dirRest, 'app.db'))) {
+    const aparte = path.join(DATA, `antes-de-restaurar-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+    fs.mkdirSync(aparte, { recursive: true });
+    for (const f of ['app.db', 'app.db-wal', 'app.db-shm']) if (fs.existsSync(path.join(DATA, f))) fs.renameSync(path.join(DATA, f), path.join(aparte, f));
+    fs.renameSync(path.join(dirRest, 'app.db'), path.join(DATA, 'app.db'));
+    if (fs.existsSync(path.join(dirRest, 'pdf'))) {
+      fs.renameSync(path.join(DATA, 'pdf'), path.join(aparte, 'pdf'));
+      fs.renameSync(path.join(dirRest, 'pdf'), path.join(DATA, 'pdf'));
+    }
+    fs.rmSync(dirRest, { recursive: true, force: true });
+    console.log(`Copia restaurada. Los datos anteriores están en ${aparte}`);
+  }
+}
 
 const db = new DatabaseSync(path.join(DATA, 'app.db'));
 
@@ -75,6 +94,9 @@ CREATE TABLE IF NOT EXISTS audit_logs(
   severidad TEXT DEFAULT 'info'
 );
 `);
+
+// Plugins (ver plugins.js): se guardan en <datos>/plugins
+const plugins = crearPlugins({ db, DATA, version: PKG.version, logAudit: (...a) => logAudit(...a) });
 
 // Migraciones de versiones anteriores
 for (const sql of [
@@ -306,7 +328,7 @@ async function generarPdf(d) {
   const estado = d.estado || 'emitido';
   const p = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true, info: {
     Title: `${TITULO[d.tipo]} ${num(d)}`,
-    Author: emp.nombre || '', Creator: 'DeCA y eCMR', CreationDate: new Date(d.creado), ModDate: new Date(d.modificado || d.creado),
+    Author: emp.nombre || '', Creator: '7DeCA', CreationDate: new Date(d.creado), ModDate: new Date(d.modificado || d.creado),
   }});
   const chunks = [], fin = new Promise(r => p.on('end', r));
   const fh = t => String(t || '').slice(0, 16).replace('T', ' ') + ' UTC';
@@ -397,9 +419,11 @@ app.use((req, res, next) => {
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  // Los plugins activos pueden añadir orígenes https (p. ej. las teselas de un mapa)
+  const x = plugins.csp(), mas = t => (x[t] || []).length ? ' ' + x[t].join(' ') : '';
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; connect-src 'self';"
+    `default-src 'self'; script-src 'self' 'unsafe-inline'${mas('script')}; style-src 'self' 'unsafe-inline'${mas('style')}; img-src 'self' data: blob:${mas('img')}; font-src 'self' data:${mas('font')}; frame-src 'self' blob:${mas('frame')}; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; connect-src 'self'${mas('connect')};`
   );
   if (req.secure || req.headers['x-forwarded-proto'] === 'https' || BASE.startsWith('https://')) {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -594,6 +618,8 @@ app.use((req, res, next) => {
   }
   next();
 });
+// Archivos de la interfaz de los plugins (solo con sesión)
+plugins.estaticos(app);
 
 // Endpoint de Inicio de Sesión
 app.post('/api/login', (req, res) => {
@@ -675,8 +701,8 @@ app.post('/api/logout', (req, res) => {
 });
 
 seguridad.rutasPublicas(app);
-// API de integración con token (solo lectura), p. ej. para el plugin «Gestor DeCA» de Facturador
-const rutasAdminIntegracion = crearIntegracion({ db, logAudit: (...a) => logAudit(...a), normDatos, num, url, version: PKG.version, ajustes }).rutas(app, adm);
+// API de integración con token (solo lectura), p. ej. para el plugin «7DeCA» de 7Factura
+const rutasAdminIntegracion = crearIntegracion({ db, logAudit: (...a) => logAudit(...a), normDatos, num, url, version: PKG.version, ajustes, extensionesDe: plugins.extensionesDe }).rutas(app, adm);
 
 // ----------------------------------------------------
 // RUTAS PROTEGIDAS (REQUIEREN AUTENTICACIÓN)
@@ -684,6 +710,25 @@ const rutasAdminIntegracion = crearIntegracion({ db, logAudit: (...a) => logAudi
 app.use('/api', (req, res, next) => req.u ? next() : res.status(401).json({ error: 'Sesión expirada o no iniciada.' }));
 seguridad.rutasPrivadas(app);
 rutasAdminIntegracion();
+plugins.rutas(app, {
+  adm, can, need, ajustes, logAudit: (...a) => logAudit(...a), DATA, BASE,
+  lib: { PDFDocument, QR },
+  // Envíos para los plugins: datos normalizados, número, enlace público y PDF oficial (se genera si falta)
+  docs: {
+    obtener(id) {
+      const d = db.prepare(`${DOC_SQL} WHERE d.id=?`).get(Number(id));
+      return d ? { id: d.id, tipo: d.tipo, num: num(d), url: url(d), estado: d.estado, creado: d.creado, asignado: d.asignado, creador_id: d.creador_id, datos: normDatos(JSON.parse(d.datos)) } : null;
+    },
+    async pdf(id) {
+      const d = db.prepare('SELECT * FROM docs WHERE id=?').get(Number(id));
+      if (!d) return null;
+      if (!fs.existsSync(pdfPath(d))) await generarPdf(d);
+      return pdfPath(d);
+    },
+    ve: (u, id) => { const d = db.prepare(`${DOC_SQL} WHERE d.id=?`).get(Number(id)); return !!d && veDoc(u, d); },
+    gestiona: (u, id) => { const d = db.prepare('SELECT tipo FROM docs WHERE id=?').get(Number(id)); return !!d && gestionaDoc(u, d); },
+  },
+});
 
 // Perfil del usuario conectado
 app.get('/api/yo', (req, res) => res.json({
@@ -970,12 +1015,14 @@ app.post('/api/ubicaciones', need('ubicaciones'), (req,res)=>{
     const vals=[nombre,String(b.tipo||'Punto de carga'),String(b.direccion||''),String(b.cp||''),String(b.ciudad||''),String(b.provincia||''),String(b.empresa||'')];
     const dup=db.prepare('SELECT id FROM ubicaciones WHERE lower(nombre)=lower(?) AND lower(tipo)=lower(?) AND lower(direccion)=lower(?) AND id<>?').get(vals[0],vals[1],vals[2],id);
     if(dup) return res.status(400).json({error:'Ya existe una ubicación con el mismo nombre, tipo y dirección. Puedes repetir el nombre si cambia el tipo o la dirección.'});
+    let uid=id;
     if(id) db.prepare('UPDATE ubicaciones SET nombre=?,tipo=?,direccion=?,cp=?,ciudad=?,provincia=?,empresa=? WHERE id=?').run(...vals,id);
-    else db.prepare('INSERT INTO ubicaciones(nombre,tipo,direccion,cp,ciudad,provincia,empresa) VALUES(?,?,?,?,?,?,?)').run(...vals);
-    res.json({ok:1});
+    else uid=Number(db.prepare('INSERT INTO ubicaciones(nombre,tipo,direccion,cp,ciudad,provincia,empresa) VALUES(?,?,?,?,?,?,?)').run(...vals).lastInsertRowid);
+    plugins.emitir('ubicacion.guardada', { id: uid, body: b, usuario: req.u.usuario });
+    res.json({ok:1,id:uid});
   } catch { res.status(400).json({error:'No se pudo guardar la ubicación'}); }
 });
-app.delete('/api/ubicaciones/:id', need('ubicaciones'), (req,res)=>{borrado(req, 'ubicaciones', "nombre||' · '||tipo", 'UBICACION_ELIMINADA');db.prepare('DELETE FROM ubicaciones WHERE id=?').run(req.params.id);res.json({ok:1});});
+app.delete('/api/ubicaciones/:id', need('ubicaciones'), (req,res)=>{borrado(req, 'ubicaciones', "nombre||' · '||tipo", 'UBICACION_ELIMINADA');db.prepare('DELETE FROM ubicaciones WHERE id=?').run(req.params.id);plugins.emitir('ubicacion.borrada', { id: Number(req.params.id) });res.json({ok:1});});
 
 // Documentos DeCA y eCMR
 // Visibilidad: administradores y usuarios con permiso de ver/crear el tipo ven todos los documentos de ese tipo.
@@ -1035,7 +1082,7 @@ const faltan = (tipo, datos) => {
 app.post('/api/docs', async (req,res)=>{
   try {
     const {tipo,datos:payload={},estado:requestedEstado,asignado:asignadoReq} = req.body||{};
-    const datos=normDatos(payload);
+    let datos=normDatos(payload);
     delete datos.asignado;
     if(!CAMPOS[tipo]) return res.status(400).json({error:'Tipo de documento no válido'});
     if(!can(req.u,tipo+'_crear')) return res.status(403).json({error:'No tienes permiso para crear este documento'});
@@ -1052,6 +1099,7 @@ app.post('/api/docs', async (req,res)=>{
     }
 
     const e = faltan(tipo, datos); if(e) return res.status(400).json({error:e});
+    datos = plugins.aplicar('doc.datos', datos, { tipo, nuevo: true });
 
     // Compatibilidad retroactiva: rellenar campo 'cliente' para vistas antiguas
     const cpStr = `${datos.contraparte_nombre} (NIF ${datos.contraparte_nif}), ${datos.contraparte_direccion}`;
@@ -1064,6 +1112,7 @@ app.post('/api/docs', async (req,res)=>{
       .run(tipo,token,creado,creado,JSON.stringify(datos),req.u.nombre,estado,asig.id,req.u.id);
     const d={id:Number(r.lastInsertRowid),tipo,token,creado,modificado:creado,datos:JSON.stringify(datos),estado};
     await generarPdf(d);
+    plugins.emitir('doc.guardado', { doc: d, datos, nuevo: true, usuario: req.u.usuario });
     logAudit(req.u.usuario, req.ip, 'DOC_CREADO', `Creación de ${num(d)} en estado ${estado}${asig.id?`, asignado a ${asig.nombre}`:''}`);
     res.json({num:num(d),url:url(d),id:d.id,estado});
   }catch(x){console.error(x);res.status(500).json({error:'No se pudo generar el PDF'});}
@@ -1106,6 +1155,7 @@ app.put('/api/docs/:id', async (req,res)=>{
     d.datos=JSON.stringify(datos);d.modificado=ahora;
     db.prepare('UPDATE docs SET datos=?,modificado=? WHERE id=?').run(d.datos,ahora,d.id);
     await generarPdf({...d,datos:d.datos});
+    plugins.emitir('doc.guardado', { doc: d, datos, nuevo: false, cambios, usuario: req.u.usuario });
     logAudit(req.u.usuario, req.ip, 'DOC_MODIFICADO', `Modificación de ${num(d)}: ${motivo}`);
     res.json({num:num(d),url:url(d),estado:d.estado||'emitido'});
   }catch(x){console.error(x);res.status(500).json({error:'No se pudo modificar el documento'});}
@@ -1222,10 +1272,10 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Ha ocurrido un error interno en el servidor.' });
 });
 
-if (require.main === module) {
+if (require.main === module) plugins.cargar().finally(() => {
   // HOST=127.0.0.1 limita las conexiones al propio equipo (p. ej. con network_mode: host detrás de Caddy)
   app.listen(PORT, process.env.HOST || undefined, () => {
-    console.log(`DeCA y eCMR activo en http://${process.env.HOST || 'localhost'}:${PORT}`);
+    console.log(`7DeCA activo en http://${process.env.HOST || 'localhost'}:${PORT}`);
     console.log(`URL base para códigos QR: ${BASE}`);
     console.log(`Versión ${PKG.version}${process.env.DECA_SUPERVISADO === '1' ? ' (con supervisor: actualizaciones activas)' : ' (sin supervisor: arranca con «npm start» para poder instalar actualizaciones)'}`);
     actualizador.alArrancar();
@@ -1242,7 +1292,7 @@ if (require.main === module) {
       }
     })().catch(console.error);
   });
-}
+});
 
-module.exports = { app, db, hash, okPw, validatePassword, isSetupNeeded, logAudit };
+module.exports = { app, db, plugins, hash, okPw, validatePassword, isSetupNeeded, logAudit };
 

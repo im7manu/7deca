@@ -14,7 +14,7 @@ const {
   generateAuthenticationOptions, verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 
-const NOMBRE_APP = 'Gestor DeCA eCMR';
+const NOMBRE_APP = '7DeCA';
 const CODIGO_MIN = 10;
 const CODIGO_INTENTOS = 5;
 

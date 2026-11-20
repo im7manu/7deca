@@ -41,7 +41,7 @@ test('tokens de integración y API de solo lectura', async () => {
   assert.equal((await cliente()('/api/integracion/v1/estado')).status, 401);
   assert.equal((await cliente({ Authorization: 'Bearer deca_falsofalsofalsofalsofalso' })('/api/integracion/v1/estado')).status, 401);
 
-  r = await admin('/api/integraciones', { nombre: 'Facturador' });
+  r = await admin('/api/integraciones', { nombre: '7Factura' });
   assert.equal(r.status, 200);
   const token = r.data.token;
   assert.match(token, /^deca_/);

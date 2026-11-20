@@ -1,4 +1,4 @@
-// API de integración de solo lectura para otras aplicaciones (p. ej. el plugin «Gestor DeCA» de Facturador).
+// API de integración de solo lectura para otras aplicaciones (p. ej. el plugin «7DeCA» de 7Factura).
 //
 // El administrador crea tokens en Usuarios › Integraciones. Cada token se muestra una sola vez; en la base de
 // datos solo se guarda su hash SHA-256. Las peticiones llevan la cabecera «Authorization: Bearer <token>».
@@ -10,7 +10,7 @@
 
 const crypto = require('crypto');
 
-function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes }) {
+function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes, extensionesDe = () => [] }) {
   db.exec(`CREATE TABLE IF NOT EXISTS tokens_integracion(
     id INTEGER PRIMARY KEY, nombre TEXT NOT NULL, prefijo TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
     creado TEXT NOT NULL, creado_por TEXT, ultimo_uso TEXT, ultimo_ip TEXT, revocado INTEGER DEFAULT 0
@@ -42,7 +42,7 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes 
   const fechaOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
   function envio(d) {
     const x = normDatos(JSON.parse(d.datos || '{}'));
-    return {
+    const out = {
       id: d.id, numero: num(d), tipo: d.tipo, estado: d.estado || 'emitido', creado: d.creado, modificado: d.modificado || d.creado,
       fecha: x.f_carga || String(d.creado || '').slice(0, 10), mi_papel: x.mi_papel || 'transportista',
       contraparte: { nombre: x.contraparte_nombre || '', nif: x.contraparte_nif || '', direccion: x.contraparte_direccion || '' },
@@ -51,12 +51,17 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes 
       conductor: { nombre: x.conductor_nombre || '', dni: x.conductor_dni || '' }, albaran: x.nalbaran || '',
       observaciones: x.obs || '', pdf: url(d),
     };
+    // Campos que añaden los plugins (p. ej. «ruta» con los km del plugin Rutas)
+    for (const { id, fn } of extensionesDe('integracion.envio')) {
+      try { Object.assign(out, fn({ envio: out, datos: x, doc: d }) || {}); } catch (e) { console.error(`[plugin ${id}] integracion.envio:`, e.message); }
+    }
+    return out;
   }
 
   function rutas(app, adm) {
     // ---- API con token (se monta antes de la comprobación de sesión) ----
     app.get('/api/integracion/v1/estado', autenticar, (req, res) => res.json({
-      aplicacion: 'Gestor DeCA y eCMR', version, token: req.integracion.nombre,
+      aplicacion: '7DeCA', version, token: req.integracion.nombre,
       empresa: { nombre: ajustes().nombre || '', nif: ajustes().nif || '' },
     }));
     app.get('/api/integracion/v1/envios', autenticar, (req, res) => {
@@ -78,7 +83,7 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes 
       app.get('/api/integraciones', adm, (_, res) => res.json(db.prepare('SELECT * FROM tokens_integracion WHERE revocado=0 ORDER BY id DESC').all().map(publico)));
       app.post('/api/integraciones', adm, (req, res) => {
         const nombre = String(req.body?.nombre || '').trim().slice(0, 60);
-        if (!nombre) return res.status(400).json({ error: 'Pon un nombre para reconocer la integración (p. ej. «Facturador»).' });
+        if (!nombre) return res.status(400).json({ error: 'Pon un nombre para reconocer la integración (p. ej. «7Factura»).' });
         const token = 'deca_' + crypto.randomBytes(32).toString('base64url');
         const r = db.prepare('INSERT INTO tokens_integracion(nombre,prefijo,hash,creado,creado_por) VALUES(?,?,?,?,?)')
           .run(nombre, token.slice(0, 12), sha(token), new Date().toISOString(), req.u.usuario);

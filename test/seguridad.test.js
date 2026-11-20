@@ -57,7 +57,7 @@ test('flujo completo de seguridad de cuentas', async t => {
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.equal(enviados.length, 2);
     assert.equal(enviados[0].recipient, '34600112233');
-    assert.match(enviados[0].message, /^Este es tu código para verificar tu teléfono en Gestor DeCA eCMR: \d{6}\. ¿No has sido tú\? Ignora este mensaje\.$/);
+    assert.match(enviados[0].message, /^Este es tu código para verificar tu teléfono en 7DeCA: \d{6}\. ¿No has sido tú\? Ignora este mensaje\.$/);
     assert.match(ultimoCodigo(), /^\d{6}$/);
     r = await admin('/api/cuenta/telefono/verificar', { codigo: '000000' === ultimoCodigo() ? '111111' : '000000' });
     assert.equal(r.status, 400);
@@ -88,7 +88,7 @@ test('flujo completo de seguridad de cuentas', async t => {
     assert.equal(enviados.length, n + 2);
     assert.equal(enviados[n].recipient, '34611223344');
     const codigo = enviados[n + 1].message;
-    assert.equal(enviados[n].message, `Este es tu código para restablecer la contraseña de Gestor DeCA eCMR: ${codigo}. ¿No has sido tú? Ignora este mensaje.`);
+    assert.equal(enviados[n].message, `Este es tu código para restablecer la contraseña de 7DeCA: ${codigo}. ¿No has sido tú? Ignora este mensaje.`);
 
     // Usuario inexistente: misma respuesta y ningún mensaje
     r = await anon('/api/recuperar/solicitar', { usuario: 'noexiste' });

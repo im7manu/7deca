@@ -1,10 +1,10 @@
-<img width="75" height="75" alt="Icono de Gestor DeCA y eCMR" src="https://github.com/user-attachments/assets/40182b76-2a7d-40a5-872e-007ea6214417" /> <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" xmlns:c2pa="http://c2pa.org/manifest"> <rect width="64" height="64" rx="12" fill="#0f6cbd"/><path d="M18 16h14a16 16 0 0 1 0 32H18z" fill="#fff"/></svg>
-# Gestor DeCA y eCMR 
+<img width="75" height="75" alt="Icono de 7DeCA" src="https://github.com/user-attachments/assets/40182b76-2a7d-40a5-872e-007ea6214417" /> <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" xmlns:c2pa="http://c2pa.org/manifest"> <rect width="64" height="64" rx="12" fill="#0f6cbd"/><path d="M18 16h14a16 16 0 0 1 0 32H18z" fill="#fff"/></svg>
+# 7DeCA 
 
 Plataforma integral para la emisión, gestión y trazabilidad documental de **DeCA** (Documento Electrónico de Control Administrativo) y **eCMR** (Carta de porte electrónica internacional), con interfaz moderna, backend en Node.js, base de datos nativa SQLite y arquitectura de seguridad blindada para despliegues en producción.
 
 ---
-<img width="960" alt="Interfaz inicial de Gestor DeCA y eCMR" src="https://github.com/user-attachments/assets/1bf3c7a7-28a6-4056-b6eb-798301ed5f1b" />
+<img width="960" alt="Interfaz inicial de 7DeCA" src="https://github.com/user-attachments/assets/1bf3c7a7-28a6-4056-b6eb-798301ed5f1b" />
 
 ## 🚀 Primer Arranque y Registro Inicial (Setup Wizard)
 
@@ -82,16 +82,24 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 - Los documentos PDF oficiales generados se almacenan en `data/pdf/<token>.pdf`.
 - La URL pública accesible mediante QR `/d/<token>` permite la comprobación en carretera por las autoridades de tráfico e inspección de transportes sin necesidad de credenciales.
 
-## Novedades de la versión 1.4.0: integración con Facturador
+## Novedades de la versión 1.5.0: plugins
 
-En **Usuarios › Integraciones** el administrador crea un token de **solo lectura** para otra aplicación. Con él, el plugin **Gestor DeCA** de [Facturador](https://github.com/im7manu/facturador) lista los envíos emitidos o cerrados y los convierte en una factura en borrador (por viaje o por tonelada), recuerda cuáles están facturados y copia clientes, vehículos y conductores.
+7DeCA admite **plugins**: funciones opcionales que el administrador instala desde la página **Plugins** del menú. Se descargan del registro oficial ([im7manu/7deca-plugins](https://github.com/im7manu/7deca-plugins)) y se comprueba su SHA-256 antes de instalarlos; también se puede subir un `.tar.gz`. Se guardan en `data/plugins/` (con sus datos en `data/plugins-datos/`), así que las actualizaciones de la aplicación no los borran.
+
+El primero es **7Ruta**: busca las ubicaciones o pon sus coordenadas y velas en el mapa, muestra la ruta de cada envío (camión o coche, evitando peajes, autopistas o ferris) y guarda los km. 7Factura los recibe por la API de integración (campo `ruta`) para **facturar por kilómetro**. Funciona con OpenRouteService (gratis) o con Google Maps (con la clave del administrador).
+
+Un plugin funciona con los mismos permisos que la aplicación: instala solo los del registro oficial o de autores de confianza. Cómo crear uno: [`docs/plugins.md`](docs/plugins.md).
+
+## Novedades de la versión 1.4.0: integración con 7Factura
+
+En **Usuarios › Integraciones** el administrador crea un token de **solo lectura** para otra aplicación. Con él, el plugin **7DeCA** de [7Factura](https://github.com/im7manu/7factura) lista los envíos emitidos o cerrados y los convierte en una factura en borrador (por viaje o por tonelada), recuerda cuáles están facturados y copia clientes, vehículos y conductores.
 
 El token se muestra una sola vez (solo se guarda su hash), no permite modificar nada, queda en la auditoría (`INTEGRACION_*`) y se puede revocar al momento.
 
 | Petición (con `Authorization: Bearer deca_…`) | Devuelve |
 |---|---|
 | `GET /api/integracion/v1/estado` | Versión y empresa |
-| `GET /api/integracion/v1/envios?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&tipo=deca\|ecmr&estado=emitido,cerrado` | Envíos con cliente, ruta, mercancía, peso, matrícula, conductor y enlace al PDF |
+| `GET /api/integracion/v1/envios?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&tipo=deca\|ecmr&estado=emitido,cerrado` | Envíos con cliente, ruta, mercancía, peso, matrícula, conductor y enlace al PDF. Con el plugin 7Ruta (1.5.0), también `ruta` (km, duración, opciones) y `puntos` (coordenadas de carga y descargas) |
 | `GET /api/integracion/v1/empresas`, `/vehiculos`, `/conductores` | Catálogo |
 
 ## Novedades de la versión 1.3.0
@@ -116,7 +124,7 @@ Los mensajes se envían a través de un puente HTTP compatible con [whatsapp-mcp
 
 Mensaje que recibe el usuario (y, aparte, el código solo, para copiarlo con una pulsación larga):
 
-> Este es tu código para restablecer la contraseña de Gestor DeCA eCMR: 286472. ¿No has sido tú? Ignora este mensaje.
+> Este es tu código para restablecer la contraseña de 7DeCA: 286472. ¿No has sido tú? Ignora este mensaje.
 
 Las passkeys funcionan solo por HTTPS (o en `localhost`) y van ligadas al dominio de `BASE_URL`: si cambias de dominio, los usuarios tendrán que crearlas de nuevo.
 
@@ -138,7 +146,7 @@ Las passkeys funcionan solo por HTTPS (o en `localhost`) y van ligadas al domini
 
 ## 🔄 Actualizaciones
 
-La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/gestor-deca-ecmr`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática en el horario que elijan (por defecto, de 3:00 a 5:00).
+La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/7deca`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática en el horario que elijan (por defecto, de 3:00 a 5:00).
 
 **Cómo se instala sin riesgo:**
 
@@ -154,11 +162,11 @@ Se conservan las 3 últimas copias, descargables desde la propia pantalla. Todo 
 ```ini
 # /etc/systemd/system/deca-ecmr.service
 [Unit]
-Description=Gestor DeCA y eCMR
+Description=7DeCA
 After=network-online.target
 
 [Service]
-WorkingDirectory=/opt/gestor-deca-ecmr
+WorkingDirectory=/opt/7deca
 ExecStart=/usr/bin/node scripts/supervisor.js
 Environment=PORT=9000 BASE_URL=https://tudominio.com TRUST_PROXY=1
 Restart=always

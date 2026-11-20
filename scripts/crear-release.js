@@ -54,7 +54,7 @@ try {
 
 fs.mkdirSync(salida, { recursive: true });
 const archivo = path.join(salida, `${NOMBRE}-${pkg.version}.tar.gz`);
-execFileSync('tar', ['-czf', archivo, '-C', trabajo, NOMBRE], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
+execFileSync('tar', ['--no-xattrs', '-czf', archivo, '-C', trabajo, NOMBRE], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
 const firma = crypto.sign(null, fs.readFileSync(archivo), clave).toString('base64');
 fs.writeFileSync(archivo + '.sig', firma + '\n');
 fs.rmSync(trabajo, { recursive: true, force: true });

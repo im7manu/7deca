@@ -84,7 +84,7 @@ Para garantizar un entorno impenetrable en producción, se han incorporado las s
 
 ## Novedades de la versión 1.5.0: plugins
 
-7DeCA admite **plugins**: funciones opcionales que el administrador instala desde la página **Plugins** del menú. Se descargan del registro oficial ([im7manu/gestor-deca-plugins](https://github.com/im7manu/gestor-deca-plugins)) y se comprueba su SHA-256 antes de instalarlos; también se puede subir un `.tar.gz`. Se guardan en `data/plugins/` (con sus datos en `data/plugins-datos/`), así que las actualizaciones de la aplicación no los borran.
+7DeCA admite **plugins**: funciones opcionales que el administrador instala desde la página **Plugins** del menú. Se descargan del registro oficial ([im7manu/7deca-plugins](https://github.com/im7manu/7deca-plugins)) y se comprueba su SHA-256 antes de instalarlos; también se puede subir un `.tar.gz`. Se guardan en `data/plugins/` (con sus datos en `data/plugins-datos/`), así que las actualizaciones de la aplicación no los borran.
 
 El primero es **7Ruta**: busca las ubicaciones o pon sus coordenadas y velas en el mapa, muestra la ruta de cada envío (camión o coche, evitando peajes, autopistas o ferris) y guarda los km. 7Factura los recibe por la API de integración (campo `ruta`) para **facturar por kilómetro**. Funciona con OpenRouteService (gratis) o con Google Maps (con la clave del administrador).
 
@@ -92,7 +92,7 @@ Un plugin funciona con los mismos permisos que la aplicación: instala solo los 
 
 ## Novedades de la versión 1.4.0: integración con 7Factura
 
-En **Usuarios › Integraciones** el administrador crea un token de **solo lectura** para otra aplicación. Con él, el plugin **7DeCA** de [7Factura](https://github.com/im7manu/facturador) lista los envíos emitidos o cerrados y los convierte en una factura en borrador (por viaje o por tonelada), recuerda cuáles están facturados y copia clientes, vehículos y conductores.
+En **Usuarios › Integraciones** el administrador crea un token de **solo lectura** para otra aplicación. Con él, el plugin **7DeCA** de [7Factura](https://github.com/im7manu/7factura) lista los envíos emitidos o cerrados y los convierte en una factura en borrador (por viaje o por tonelada), recuerda cuáles están facturados y copia clientes, vehículos y conductores.
 
 El token se muestra una sola vez (solo se guarda su hash), no permite modificar nada, queda en la auditoría (`INTEGRACION_*`) y se puede revocar al momento.
 
@@ -146,7 +146,7 @@ Las passkeys funcionan solo por HTTPS (o en `localhost`) y van ligadas al domini
 
 ## 🔄 Actualizaciones
 
-La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/gestor-deca-ecmr`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática en el horario que elijan (por defecto, de 3:00 a 5:00).
+La aplicación comprueba cada hora si hay una versión nueva publicada en las **Releases** de GitHub (`im7manu/7deca`). Los administradores la ven en **Usuarios › Actualizaciones** y en la campana de avisos, y pueden instalarla con un clic o dejar activada la instalación automática en el horario que elijan (por defecto, de 3:00 a 5:00).
 
 **Cómo se instala sin riesgo:**
 
@@ -166,7 +166,7 @@ Description=7DeCA
 After=network-online.target
 
 [Service]
-WorkingDirectory=/opt/gestor-deca-ecmr
+WorkingDirectory=/opt/7deca
 ExecStart=/usr/bin/node scripts/supervisor.js
 Environment=PORT=9000 BASE_URL=https://tudominio.com TRUST_PROXY=1
 Restart=always

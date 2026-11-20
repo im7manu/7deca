@@ -39,7 +39,7 @@ const cumpleNode = req => {
 };
 
 function crearActualizador({ db, logAudit, ROOT, DATA, version, nombre }) {
-  const REPO = process.env.UPDATE_REPO || 'im7manu/gestor-deca-ecmr';
+  const REPO = process.env.UPDATE_REPO || 'im7manu/7deca';
   const API = (process.env.UPDATE_API || 'https://api.github.com').replace(/\/$/, '');
   const DESACTIVADO = process.env.UPDATE_DISABLED === '1';
   const SUPERVISADO = process.env.DECA_SUPERVISADO === '1';

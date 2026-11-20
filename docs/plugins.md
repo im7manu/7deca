@@ -1,6 +1,6 @@
 # Plugins de 7DeCA
 
-Desde la versión 1.5.0, 7DeCA admite plugins: carpetas con un `plugin.json`, código de servidor opcional y scripts para la interfaz. Los plugins oficiales están en [im7manu/gestor-deca-plugins](https://github.com/im7manu/gestor-deca-plugins).
+Desde la versión 1.5.0, 7DeCA admite plugins: carpetas con un `plugin.json`, código de servidor opcional y scripts para la interfaz. Los plugins oficiales están en [im7manu/7deca-plugins](https://github.com/im7manu/7deca-plugins).
 
 > Un plugin ejecuta código con los mismos permisos que la aplicación. Instala solo plugins de fuentes en las que confíes.
 

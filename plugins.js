@@ -33,7 +33,7 @@ const exec = promisify(execFile);
 const TAR = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 const rutaPeligrosa = e => e.startsWith('/') || /^[a-z]:/i.test(e) || e.includes('\\') || e.split('/').includes('..');
 const ID_VALIDO = /^[a-z0-9][a-z0-9-]{1,40}$/;
-const REGISTRO_DEFECTO = 'https://raw.githubusercontent.com/im7manu/gestor-deca-plugins/main/registry.json';
+const REGISTRO_DEFECTO = 'https://raw.githubusercontent.com/im7manu/7deca-plugins/main/registry.json';
 // Solo para desarrollo: permite registros y descargas por http
 const URL_PERMITIDA = process.env.DECA_PLUGINS_DEV_HTTP === '1' ? /^https?:\/\// : /^https:\/\//;
 // Orígenes que un plugin puede añadir a la política de seguridad de contenidos (solo https, sin rutas)

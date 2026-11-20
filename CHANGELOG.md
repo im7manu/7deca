@@ -6,6 +6,7 @@
 - Los plugins pueden añadir páginas al menú, secciones en Ubicaciones, en el formulario de envío y en el detalle del envío, rutas propias (`/api/p/<id>/`), campos extra en la API de integración y orígenes https en la política de seguridad de contenidos (por ejemplo, las teselas de un mapa).
 - Clave de la instalación (`data/secreto.key`) para que los plugins guarden secretos cifrados (AES-256-GCM).
 - `POST /api/ubicaciones` devuelve el `id` de la ubicación.
+- Con el plugin Rutas y mapas, los campos de dirección (ubicaciones, empresas, contraparte y Mi entidad) sugieren direcciones mientras se escribe y rellenan el código postal, la población y la provincia.
 - Primer plugin oficial: **Rutas y mapas** (repositorio [gestor-deca-plugins](https://github.com/im7manu/gestor-deca-plugins)).
 
 ## 1.4.0

@@ -78,6 +78,7 @@ function crearPlugins({ db, DATA, version, logAudit }) {
   const routers = new Map();
   const extensiones = new Map();
   const temporizadores = new Map();
+  const paradas = new Map(); // id -> funciones que el plugin quiere ejecutar al desactivarlo (cerrar conexiones…)
   const cargados = new Set();
   let reinicioPendiente = false;
   let deps = {};
@@ -97,6 +98,8 @@ function crearPlugins({ db, DATA, version, logAudit }) {
   }
 
   function quitar(id) {
+    for (const fn of paradas.get(id) || []) { try { fn(); } catch (e) { console.error(`[plugin ${id}] al parar:`, e.message); } }
+    paradas.delete(id);
     routers.delete(id);
     for (const m of extensiones.values()) m.delete(id);
     for (const t of temporizadores.get(id) || []) clearInterval(t);
@@ -135,11 +138,15 @@ function crearPlugins({ db, DATA, version, logAudit }) {
       const ctx = {
         router, db, express, manifest: m, dir, dataDir: datos, version,
         hooks: hooksPlugin, logAudit: deps.logAudit || logAudit, adm: deps.adm, can: deps.can, need: deps.need, ajustes: deps.ajustes,
+        docs: deps.docs, lib: deps.lib, base: deps.BASE, dataRoot: DATA, extensionesDe,
+        // Reinicia la aplicación (solo con supervisor, que la vuelve a arrancar)
+        reiniciar() { if (process.env.DECA_SUPERVISADO !== '1') throw new Error('La aplicación no tiene supervisor (npm start): reiníciala a mano.'); setTimeout(() => process.exit(0), 500); },
         getAjuste, setAjuste, cifrar, descifrar,
         extender(punto, fn) {
           if (!extensiones.has(punto)) extensiones.set(punto, new Map());
           extensiones.get(punto).set(id, fn);
         },
+        alParar(fn) { paradas.set(id, [...(paradas.get(id) || []), fn]); },
         cada(ms, fn) {
           const t = setInterval(() => Promise.resolve().then(fn).catch(e => console.error(`[${id}]`, e)), ms);
           t.unref();
@@ -238,8 +245,8 @@ function crearPlugins({ db, DATA, version, logAudit }) {
   const cambiado = () => { cacheCsp = null; };
 
   /** Monta las rutas. Se llama después de la comprobación de sesión. */
-  function rutas(app, { adm, can, need, ajustes, logAudit: la }) {
-    deps = { adm, can, need, ajustes, logAudit: la };
+  function rutas(app, { adm, can, need, ajustes, logAudit: la, docs, lib, BASE }) {
+    deps = { adm, can, need, ajustes, logAudit: la, docs, lib, BASE };
     const L = (req, accion, detalle, sev = 'aviso') => la(req.u.usuario, req.ip, accion, detalle, sev);
 
     // Lo que necesita la interfaz (cualquier usuario con sesión)

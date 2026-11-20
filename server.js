@@ -18,6 +18,24 @@ const DATA = process.env.DECA_DATA ? path.resolve(process.env.DECA_DATA) : path.
 fs.mkdirSync(DATA, { recursive: true });
 fs.mkdirSync(path.join(DATA, 'pdf'), { recursive: true });
 
+// Restauración de una copia preparada por un plugin (p. ej. «Copias automáticas»): se aplica al arrancar, antes de abrir
+// la base de datos. Lo actual se aparta en data/antes-de-restaurar-<fecha>/ por si hubiera que deshacerla.
+{
+  const dirRest = path.join(DATA, 'restaurar');
+  if (fs.existsSync(path.join(dirRest, 'app.db'))) {
+    const aparte = path.join(DATA, `antes-de-restaurar-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+    fs.mkdirSync(aparte, { recursive: true });
+    for (const f of ['app.db', 'app.db-wal', 'app.db-shm']) if (fs.existsSync(path.join(DATA, f))) fs.renameSync(path.join(DATA, f), path.join(aparte, f));
+    fs.renameSync(path.join(dirRest, 'app.db'), path.join(DATA, 'app.db'));
+    if (fs.existsSync(path.join(dirRest, 'pdf'))) {
+      fs.renameSync(path.join(DATA, 'pdf'), path.join(aparte, 'pdf'));
+      fs.renameSync(path.join(dirRest, 'pdf'), path.join(DATA, 'pdf'));
+    }
+    fs.rmSync(dirRest, { recursive: true, force: true });
+    console.log(`Copia restaurada. Los datos anteriores están en ${aparte}`);
+  }
+}
+
 const db = new DatabaseSync(path.join(DATA, 'app.db'));
 
 // Esquema de base de datos con tablas relacionales y tabla de auditoría de seguridad
@@ -692,7 +710,25 @@ const rutasAdminIntegracion = crearIntegracion({ db, logAudit: (...a) => logAudi
 app.use('/api', (req, res, next) => req.u ? next() : res.status(401).json({ error: 'Sesión expirada o no iniciada.' }));
 seguridad.rutasPrivadas(app);
 rutasAdminIntegracion();
-plugins.rutas(app, { adm, can, need, ajustes, logAudit: (...a) => logAudit(...a) });
+plugins.rutas(app, {
+  adm, can, need, ajustes, logAudit: (...a) => logAudit(...a), DATA, BASE,
+  lib: { PDFDocument, QR },
+  // Envíos para los plugins: datos normalizados, número, enlace público y PDF oficial (se genera si falta)
+  docs: {
+    obtener(id) {
+      const d = db.prepare(`${DOC_SQL} WHERE d.id=?`).get(Number(id));
+      return d ? { id: d.id, tipo: d.tipo, num: num(d), url: url(d), estado: d.estado, creado: d.creado, asignado: d.asignado, creador_id: d.creador_id, datos: normDatos(JSON.parse(d.datos)) } : null;
+    },
+    async pdf(id) {
+      const d = db.prepare('SELECT * FROM docs WHERE id=?').get(Number(id));
+      if (!d) return null;
+      if (!fs.existsSync(pdfPath(d))) await generarPdf(d);
+      return pdfPath(d);
+    },
+    ve: (u, id) => { const d = db.prepare(`${DOC_SQL} WHERE d.id=?`).get(Number(id)); return !!d && veDoc(u, d); },
+    gestiona: (u, id) => { const d = db.prepare('SELECT tipo FROM docs WHERE id=?').get(Number(id)); return !!d && gestionaDoc(u, d); },
+  },
+});
 
 // Perfil del usuario conectado
 app.get('/api/yo', (req, res) => res.json({

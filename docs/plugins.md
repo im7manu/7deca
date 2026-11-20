@@ -52,6 +52,11 @@ export function register(ctx) {
 | `ajustes()` | Datos de Mi entidad |
 | `extender(punto, fn)`, `hooks.on(evento, fn)` | Puntos de extensión y eventos (abajo) |
 | `cada(ms, fn)` | Tarea periódica que se detiene al desactivar el plugin |
+| `alParar(fn)` | Función que se ejecuta al desactivar o actualizar el plugin (cerrar conexiones…) |
+| `extensionesDe(punto)` | Funciones que ofrecen otros plugins en un punto, `[{ id, fn }]` (p. ej. `documentos.extra`) |
+| `docs` | Envíos: `obtener(id)`, `pdf(id)` (ruta del PDF oficial), `ve(usuario, id)`, `gestiona(usuario, id)` |
+| `lib` | `PDFDocument` (pdfkit) y `QR` (qrcode) |
+| `reiniciar()` | Reinicia la aplicación (necesita supervisor) |
 | `dataDir`, `dir`, `manifest`, `version` | Carpetas, `plugin.json` y versión de la aplicación |
 
 ### Puntos de extensión
@@ -80,11 +85,13 @@ DECA.pagina({ id: 'mi-pagina', label: 'Mi página', icon: 'map', show: () => DEC
 
 | Punto | Argumento |
 |---|---|
-| `ubicacion.form` | `{ form, cont, ubicacion }`: `cont` es un hueco al final del formulario. Los campos con `name` que añadas llegan en `body` al evento `ubicacion.guardada` |
+| `ubicacion.form` | `{ form, cont, ubicacion }`: `cont` es un hueco al final del formulario que comparten todos los plugins: añade tu propio elemento (`cont.appendChild`) en lugar de sustituir su contenido. Los campos con `name` que añadas llegan en `body` al evento `ubicacion.guardada` |
 | `ubicacion.guardada` | `{ id, body }` (en el navegador, tras guardar) |
 | `ubicaciones.lista` | `{ view, ubicaciones }`: cada tarjeta lleva `data-ubicacion="<id>"` |
-| `envio.form` | `{ form, cont, estado }`: se llama cada vez que se redibuja el formulario. Los campos con `name` dentro de `cont` se envían con los datos del envío |
+| `envio.form` | `{ form, cont, inicio, estado }`: se llama cada vez que se redibuja el formulario. `cont` es un hueco al final e `inicio`, otro al principio. Los campos con `name` dentro de `cont` se envían con los datos del envío. Para rellenar el formulario, pon `DECA.state.dup = { tipo, datos }` y llama a `DECA.renderApp()` |
 | `envio.detalle` | `{ cont, doc }` en la ventana de detalle del envío |
+
+En `envio.detalle`, usa `DECA.accionDetalle(cont, html)` para añadir tu botón a la fila común de acciones.
 
 También ofrece `DECA.api`, `DECA.toast`, `DECA.esc`, `DECA.I(icono)`, `DECA.perm`, `DECA.go`, `DECA.head`, `DECA.fieldHtml`, `DECA.showFormModal`, `DECA.state` y `DECA.ubicaciones`.
 

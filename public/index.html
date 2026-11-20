@@ -153,9 +153,11 @@ const canCreateDocs=()=>perm('deca_crear')||perm('ecmr_crear');
 const DECA={paginas:[],_ext:{},cargados:new Set(),
   extender(punto,fn){(this._ext[punto]||=[]).push(fn);},
   pagina(p){if(p&&p.id&&!this.paginas.some(x=>x.id===p.id))this.paginas.push(p);},
+  // Botón de un plugin en el detalle del envío: todos comparten una fila que se adapta al ancho
+  accionDetalle(cont,html){let b=cont.querySelector(':scope > .ext-acciones');if(!b){b=document.createElement('div');b.className='ext-acciones';b.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-top:10px';cont.appendChild(b);}const s=document.createElement('span');s.style.display='contents';s.innerHTML=html;b.appendChild(s);return s;},
   ext(punto,arg){for(const fn of this._ext[punto]||[]){try{const r=fn(arg);if(r&&r.catch)r.catch(e=>console.error('[plugin]',punto,e));}catch(e){console.error('[plugin]',punto,e);}}},
   get api(){return api},get toast(){return toast},get esc(){return esc},get I(){return I},get perm(){return perm},get go(){return go},
-  get state(){return state},get head(){return head},get fieldHtml(){return fieldHtml},get showFormModal(){return showFormModal},
+  get state(){return state},get head(){return head},get renderApp(){return renderApp},get fieldHtml(){return fieldHtml},get showFormModal(){return showFormModal},
   get ubicaciones(){return sugLocs}};
 window.DECA=DECA;
 async function cargarPluginsUI(){
@@ -571,8 +573,8 @@ async function pageNewShipment(){
     const secContraparteLabel=esTransportista?(esDeca?'Cargador contractual':'Remitente contractual'):'Transportista efectivo';
 
     document.getElementById('view').innerHTML=`
-      <div class="page-head"><div class="inline"><button class="btn-ghost btn-small" id="backShip">${I('back')} Volver</button><div><h1 class="page-title">${dup?'Duplicar envío':'Nuevo envío'}</h1><div class="page-sub">Crea un ${esDeca?'DeCA':'eCMR'} · Campos obligatorios marcados con *</div></div></div><div class="actions">${badge('borrador')}</div></div>
-      <form id="shipmentForm" autocomplete="off"><div class="grid gap12">
+      <div class="page-head"><div class="inline"><button class="btn-ghost btn-small" id="backShip">${I('back')} Volver</button><div><h1 class="page-title">${dup?(dup.titulo||'Duplicar envío'):'Nuevo envío'}</h1><div class="page-sub">Crea un ${esDeca?'DeCA':'eCMR'} · Campos obligatorios marcados con *</div></div></div><div class="actions">${badge('borrador')}</div></div>
+      <form id="shipmentForm" autocomplete="off"><div data-ext="envio-form-inicio"></div><div class="grid gap12">
 
       ${section('Tipo de documento',`<div class="grid grid2">${selectHtml('tipo','Tipo de documento',[{value:'deca',label:'DeCA · Documento de Control Administrativo'},{value:'ecmr',label:'eCMR · Carta de porte por carretera'}],s.tipo,true)}</div>`)}
 
@@ -613,7 +615,7 @@ async function pageNewShipment(){
     document.getElementById('cancelShipment').onclick=()=>go('envios');
     document.getElementById('saveDraft').onclick=()=>submitShipment(false);
     document.getElementById('shipmentForm').onsubmit=e=>{e.preventDefault();submitShipment(true)};
-    DECA.ext('envio.form',{form:document.getElementById('shipmentForm'),cont:document.querySelector('[data-ext="envio-form"]'),estado:s});
+    DECA.ext('envio.form',{form:document.getElementById('shipmentForm'),cont:document.querySelector('[data-ext="envio-form"]'),inicio:document.querySelector('[data-ext="envio-form-inicio"]'),estado:s});
 
     // Radio papel
     document.querySelectorAll('[name=mi_papel]').forEach(r=>r.onchange=e=>{s.mi_papel=e.target.value;s.contraparte_id='';s.contraparte_nombre='';s.contraparte_nif='';s.contraparte_direccion='';render();});

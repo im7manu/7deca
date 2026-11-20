@@ -2,7 +2,7 @@
 //
 // Flujo seguro:
 //  1. buscar(): consulta la última Release publicada (no borradores ni pre-releases) del repositorio configurado.
-//     Solo se ofrecen versiones que incluyan el paquete gestor-deca-ecmr-<versión>.tar.gz y su firma .sig.
+//     Solo se ofrecen versiones que incluyan el paquete deca-ecmr-<versión>.tar.gz y su firma .sig.
 //  2. instalar(): descarga el paquete, comprueba su firma Ed25519 con la clave pública incluida en la aplicación
 //     (clave-actualizaciones.pem) y lo rechaza si no cuadra. Después lo extrae en data/actualizaciones/<versión>,
 //     lo verifica (nombre, versión, sintaxis, versión de Node) y prepara sus dependencias (el paquete ya las trae).

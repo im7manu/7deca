@@ -16,7 +16,7 @@ const salida = path.join(raiz, 'release');
 const trabajo = fs.mkdtempSync(path.join(os.tmpdir(), 'deca-release-'));
 const destino = path.join(trabajo, NOMBRE);
 
-const ARCHIVOS = ['server.js', 'actualizaciones.js', 'seguridad.js', 'integracion.js', 'clave-actualizaciones.pem', 'public', 'scripts', 'docs',
+const ARCHIVOS = ['server.js', 'actualizaciones.js', 'seguridad.js', 'integracion.js', 'plugins.js', 'clave-actualizaciones.pem', 'public', 'scripts', 'docs',
   'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'icon.svg', 'manifest.webmanifest', 'Dockerfile',
   'docker-compose.example.yml', '.dockerignore', '.gitignore'];
 
@@ -38,6 +38,19 @@ execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no
 // Los enlaces simbólicos no se admiten en las actualizaciones (y .bin no hace falta)
 fs.rmSync(path.join(destino, 'node_modules', '.bin'), { recursive: true, force: true });
 fs.rmSync(path.join(destino, 'node_modules', '.package-lock.json'), { force: true });
+
+// Comprobación: el paquete debe arrancar por sí solo. Se cargan server.js y todos sus módulos con datos temporales;
+// si falta un archivo (p. ej. un módulo nuevo que no está en ARCHIVOS), se detiene antes de firmar nada.
+for (const f of fs.readdirSync(raiz).filter((x) => x.endsWith('.js') && !ARCHIVOS.includes(x))) {
+  console.error(`${f} no está en la lista de archivos del paquete (ARCHIVOS).`); process.exit(1);
+}
+const datosPrueba = fs.mkdtempSync(path.join(os.tmpdir(), 'deca-release-datos-'));
+try {
+  execFileSync(process.execPath, ['-e', "require('./server.js'); process.exit(0)"], { cwd: destino, env: { ...process.env, DECA_DATA: datosPrueba, WHATSAPP_API: '' }, stdio: 'pipe' });
+  console.log('Comprobación del paquete: server.js y sus módulos cargan correctamente.');
+} catch (e) {
+  console.error(`El paquete no arranca:\n${String(e.stderr || e.message).slice(0, 2000)}`); process.exit(1);
+} finally { fs.rmSync(datosPrueba, { recursive: true, force: true }); }
 
 fs.mkdirSync(salida, { recursive: true });
 const archivo = path.join(salida, `${NOMBRE}-${pkg.version}.tar.gz`);

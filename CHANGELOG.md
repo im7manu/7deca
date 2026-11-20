@@ -1,5 +1,9 @@
 # Cambios
 
+## 1.5.1
+
+- Corregido: el paquete de la 1.5.0 no incluía `plugins.js` y no arrancaba (las instalaciones volvían solas a la versión anterior). Ahora el paquete se comprueba arrancándolo antes de firmarlo.
+
 ## 1.5.0
 
 - **Nuevo nombre: 7DeCA** (antes Gestor DeCA y eCMR), de la familia 7Factura, 7DeCA y 7Ruta. No cambia nada de los datos, las instalaciones ni las actualizaciones.

@@ -8,7 +8,7 @@ if (!existsSync(server)) {
   console.error('No se encuentra scripts/supervisor.js');
   process.exit(1);
 }
-console.log('Iniciando DeCA y eCMR con Node...');
+console.log('Iniciando 7DeCA con Node...');
 const child = spawn(process.execPath, [server], {
   cwd: root,
   stdio: 'inherit',

@@ -328,7 +328,7 @@ async function generarPdf(d) {
   const estado = d.estado || 'emitido';
   const p = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true, info: {
     Title: `${TITULO[d.tipo]} ${num(d)}`,
-    Author: emp.nombre || '', Creator: 'DeCA y eCMR', CreationDate: new Date(d.creado), ModDate: new Date(d.modificado || d.creado),
+    Author: emp.nombre || '', Creator: '7DeCA', CreationDate: new Date(d.creado), ModDate: new Date(d.modificado || d.creado),
   }});
   const chunks = [], fin = new Promise(r => p.on('end', r));
   const fh = t => String(t || '').slice(0, 16).replace('T', ' ') + ' UTC';
@@ -701,7 +701,7 @@ app.post('/api/logout', (req, res) => {
 });
 
 seguridad.rutasPublicas(app);
-// API de integración con token (solo lectura), p. ej. para el plugin «Gestor DeCA» de Facturador
+// API de integración con token (solo lectura), p. ej. para el plugin «7DeCA» de 7Factura
 const rutasAdminIntegracion = crearIntegracion({ db, logAudit: (...a) => logAudit(...a), normDatos, num, url, version: PKG.version, ajustes, extensionesDe: plugins.extensionesDe }).rutas(app, adm);
 
 // ----------------------------------------------------
@@ -1275,7 +1275,7 @@ app.use((err, req, res, next) => {
 if (require.main === module) plugins.cargar().finally(() => {
   // HOST=127.0.0.1 limita las conexiones al propio equipo (p. ej. con network_mode: host detrás de Caddy)
   app.listen(PORT, process.env.HOST || undefined, () => {
-    console.log(`DeCA y eCMR activo en http://${process.env.HOST || 'localhost'}:${PORT}`);
+    console.log(`7DeCA activo en http://${process.env.HOST || 'localhost'}:${PORT}`);
     console.log(`URL base para códigos QR: ${BASE}`);
     console.log(`Versión ${PKG.version}${process.env.DECA_SUPERVISADO === '1' ? ' (con supervisor: actualizaciones activas)' : ' (sin supervisor: arranca con «npm start» para poder instalar actualizaciones)'}`);
     actualizador.alArrancar();

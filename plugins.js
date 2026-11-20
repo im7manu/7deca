@@ -1,4 +1,4 @@
-// Sistema de plugins de Gestor DeCA y eCMR.
+// Sistema de plugins de 7DeCA.
 //
 // Un plugin es una carpeta <datos>/plugins/<id>/ con un plugin.json:
 // {
@@ -111,7 +111,7 @@ function crearPlugins({ db, DATA, version, logAudit }) {
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf8'));
     if (!ID_VALIDO.test(m.id || '')) throw new Error('plugin.json: id no válido');
     if (!m.nombre || !m.version) throw new Error('plugin.json: faltan nombre o version');
-    if (m.app_min && cmpVersion(version, m.app_min) < 0) throw new Error(`Este plugin necesita Gestor DeCA ${m.app_min} o posterior (tienes la ${version}).`);
+    if (m.app_min && cmpVersion(version, m.app_min) < 0) throw new Error(`Este plugin necesita 7DeCA ${m.app_min} o posterior (tienes la ${version}).`);
     const rutas = [m.server, ...(m.ui?.scripts || []), ...(m.ui?.estilos || [])].filter(Boolean);
     for (const rel of rutas) {
       const abs = path.resolve(dir, rel);

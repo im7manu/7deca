@@ -1,6 +1,6 @@
-# Plugins de Gestor DeCA y eCMR
+# Plugins de 7DeCA
 
-Desde la versión 1.5.0, Gestor DeCA admite plugins: carpetas con un `plugin.json`, código de servidor opcional y scripts para la interfaz. Los plugins oficiales están en [im7manu/gestor-deca-plugins](https://github.com/im7manu/gestor-deca-plugins).
+Desde la versión 1.5.0, 7DeCA admite plugins: carpetas con un `plugin.json`, código de servidor opcional y scripts para la interfaz. Los plugins oficiales están en [im7manu/gestor-deca-plugins](https://github.com/im7manu/gestor-deca-plugins).
 
 > Un plugin ejecuta código con los mismos permisos que la aplicación. Instala solo plugins de fuentes en las que confíes.
 
@@ -27,7 +27,7 @@ Desde la versión 1.5.0, Gestor DeCA admite plugins: carpetas con un `plugin.jso
 ```
 
 - `id`: minúsculas, números y guiones (debe coincidir con el del registro).
-- `app_min`: versión mínima de Gestor DeCA; si la instalación es más antigua, no se instala.
+- `app_min`: versión mínima de 7DeCA; si la instalación es más antigua, no se instala.
 - `ui.scripts` / `ui.estilos`: se cargan en la aplicación tras iniciar sesión (en orden).
 - `csp`: orígenes `https://` extra por tipo (`img`, `script`, `connect`, `style`, `font`, `frame`) mientras el plugin esté activo.
 

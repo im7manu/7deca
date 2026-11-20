@@ -2,6 +2,7 @@
 
 ## 1.5.0
 
+- **Nuevo nombre: 7DeCA** (antes Gestor DeCA y eCMR), de la familia 7Factura, 7DeCA y 7Ruta. No cambia nada de los datos, las instalaciones ni las actualizaciones.
 - **Plugins**: nueva página **Plugins** (administradores) para instalar desde el registro oficial (con comprobación SHA-256) o subiendo un `.tar.gz`, activar, desactivar, desinstalar y actualizar plugins, y reiniciar la aplicación. Se guardan en la carpeta de datos y sobreviven a las actualizaciones.
 - Los plugins pueden añadir páginas al menú, secciones en Ubicaciones, en el formulario de envío y en el detalle del envío, rutas propias (`/api/p/<id>/`), campos extra en la API de integración y orígenes https en la política de seguridad de contenidos (por ejemplo, las teselas de un mapa).
 - Clave de la instalación (`data/secreto.key`) para que los plugins guarden secretos cifrados (AES-256-GCM).

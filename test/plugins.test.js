@@ -53,7 +53,7 @@ test('plugins: subir, cargar, CSP, extensiones, eventos y desinstalar', async ()
   r = await admin('/api/plugins/subir', paquete({ id: 'malo', nombre: 'Malo', version: '1.0.0', csp: { img: ['http://inseguro.test'] } }, {}), 'POST', 'application/gzip');
   assert.equal(r.status, 400); assert.match(r.data.error, /https/);
   r = await admin('/api/plugins/subir', paquete({ id: 'futuro', nombre: 'Futuro', version: '1.0.0', app_min: '99.0.0' }, {}), 'POST', 'application/gzip');
-  assert.equal(r.status, 400); assert.match(r.data.error, /necesita Gestor DeCA 99/);
+  assert.equal(r.status, 400); assert.match(r.data.error, /necesita 7DeCA 99/);
 
   const pk = paquete({ id: 'demo', nombre: 'Demo', version: '1.0.0', server: 'server.mjs', ui: { scripts: ['ui/demo.js'] }, csp: { img: ['https://tile.openstreetmap.org'] } }, { 'server.mjs': SERVIDOR, 'ui/demo.js': 'window.demo=1;' });
   r = await admin('/api/plugins/subir', pk, 'POST', 'application/gzip');

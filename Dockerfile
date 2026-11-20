@@ -1,4 +1,4 @@
-# Imagen de Gestor DeCA y eCMR.
+# Imagen de 7DeCA.
 # Para que las actualizaciones automáticas funcionen y se conserven, monta la carpeta de la aplicación
 # en /app (ver docker-compose.example.yml): así el supervisor puede sustituir el código y los cambios
 # sobreviven a la recreación del contenedor. Sin ese montaje, la imagen funciona con el código incluido.

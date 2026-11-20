@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Supervisor de Gestor DeCA y eCMR.
+// Supervisor de 7DeCA.
 //
 // Arranca server.js y lo vuelve a arrancar si se detiene. Además aplica las actualizaciones de forma segura:
 //  - Cuando el servidor termina con el código 75 y data/actualizacion.json está «lista», mueve el código actual

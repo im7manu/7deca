@@ -1,4 +1,4 @@
-// API de integración de solo lectura para otras aplicaciones (p. ej. el plugin «Gestor DeCA» de Facturador).
+// API de integración de solo lectura para otras aplicaciones (p. ej. el plugin «7DeCA» de 7Factura).
 //
 // El administrador crea tokens en Usuarios › Integraciones. Cada token se muestra una sola vez; en la base de
 // datos solo se guarda su hash SHA-256. Las peticiones llevan la cabecera «Authorization: Bearer <token>».
@@ -61,7 +61,7 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes,
   function rutas(app, adm) {
     // ---- API con token (se monta antes de la comprobación de sesión) ----
     app.get('/api/integracion/v1/estado', autenticar, (req, res) => res.json({
-      aplicacion: 'Gestor DeCA y eCMR', version, token: req.integracion.nombre,
+      aplicacion: '7DeCA', version, token: req.integracion.nombre,
       empresa: { nombre: ajustes().nombre || '', nif: ajustes().nif || '' },
     }));
     app.get('/api/integracion/v1/envios', autenticar, (req, res) => {
@@ -83,7 +83,7 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes,
       app.get('/api/integraciones', adm, (_, res) => res.json(db.prepare('SELECT * FROM tokens_integracion WHERE revocado=0 ORDER BY id DESC').all().map(publico)));
       app.post('/api/integraciones', adm, (req, res) => {
         const nombre = String(req.body?.nombre || '').trim().slice(0, 60);
-        if (!nombre) return res.status(400).json({ error: 'Pon un nombre para reconocer la integración (p. ej. «Facturador»).' });
+        if (!nombre) return res.status(400).json({ error: 'Pon un nombre para reconocer la integración (p. ej. «7Factura»).' });
         const token = 'deca_' + crypto.randomBytes(32).toString('base64url');
         const r = db.prepare('INSERT INTO tokens_integracion(nombre,prefijo,hash,creado,creado_por) VALUES(?,?,?,?,?)')
           .run(nombre, token.slice(0, 12), sha(token), new Date().toISOString(), req.u.usuario);

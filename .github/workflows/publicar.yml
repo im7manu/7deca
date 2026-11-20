@@ -34,4 +34,4 @@ jobs:
       - name: Crear la Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" release/* --title "Gestor DeCA y eCMR ${GITHUB_REF_NAME#v}" --notes-file notas.md --verify-tag
+        run: gh release create "${GITHUB_REF_NAME}" release/* --title "7DeCA ${GITHUB_REF_NAME#v}" --notes-file notas.md --verify-tag

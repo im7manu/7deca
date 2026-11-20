@@ -243,11 +243,15 @@ function crearPlugins({ db, DATA, version, logAudit }) {
     const L = (req, accion, detalle, sev = 'aviso') => la(req.u.usuario, req.ip, accion, detalle, sev);
 
     // Lo que necesita la interfaz (cualquier usuario con sesión)
-    app.get('/api/plugins/ui', (req, res) => res.json(activos().filter(p => p.manifest.ui).map(p => ({
-      id: p.id, nombre: p.manifest.nombre, version: p.version,
-      scripts: (p.manifest.ui.scripts || []).map(s => `/plugins/${p.id}/${s}?v=${encodeURIComponent(p.version)}`),
-      estilos: (p.manifest.ui.estilos || []).map(s => `/plugins/${p.id}/${s}?v=${encodeURIComponent(p.version)}`),
-    }))));
+    // ?v= cambia con la versión y con cada instalación, para que el navegador no use una copia antigua de la caché
+    app.get('/api/plugins/ui', (req, res) => res.json(activos().filter(p => p.manifest.ui).map(p => {
+      const v = encodeURIComponent(`${p.version}-${Date.parse(p.instalado) || 0}`);
+      return {
+        id: p.id, nombre: p.manifest.nombre, version: p.version,
+        scripts: (p.manifest.ui.scripts || []).map(s => `/plugins/${p.id}/${s}?v=${v}`),
+        estilos: (p.manifest.ui.estilos || []).map(s => `/plugins/${p.id}/${s}?v=${v}`),
+      };
+    })));
 
     app.get('/api/plugins', adm, (_, res) => res.json({ instalados: instalados(), reinicio_pendiente: reinicioPendiente, supervisado: process.env.DECA_SUPERVISADO === '1', registro: registroUrl() }));
     app.get('/api/plugins/registro', adm, async (_, res) => {

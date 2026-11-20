@@ -60,7 +60,7 @@ test('plugins: subir, cargar, CSP, extensiones, eventos y desinstalar', async ()
   assert.equal(r.status, 200, JSON.stringify(r.data));
 
   r = await admin('/api/plugins/ui');
-  assert.deepEqual(r.data[0].scripts, ['/plugins/demo/ui/demo.js?v=1.0.0']);
+  assert.match(r.data[0].scripts[0], /^\/plugins\/demo\/ui\/demo\.js\?v=1\.0\.0-\d+$/);
   assert.equal((await fetch(base + '/plugins/demo/ui/demo.js')).status, 401, 'sin sesión no se sirven los archivos');
   r = await admin('/plugins/demo/ui/demo.js');
   assert.equal(r.status, 200);

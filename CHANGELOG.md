@@ -1,5 +1,13 @@
 # Cambios
 
+## 1.5.0
+
+- **Plugins**: nueva página **Plugins** (administradores) para instalar desde el registro oficial (con comprobación SHA-256) o subiendo un `.tar.gz`, activar, desactivar, desinstalar y actualizar plugins, y reiniciar la aplicación. Se guardan en la carpeta de datos y sobreviven a las actualizaciones.
+- Los plugins pueden añadir páginas al menú, secciones en Ubicaciones, en el formulario de envío y en el detalle del envío, rutas propias (`/api/p/<id>/`), campos extra en la API de integración y orígenes https en la política de seguridad de contenidos (por ejemplo, las teselas de un mapa).
+- Clave de la instalación (`data/secreto.key`) para que los plugins guarden secretos cifrados (AES-256-GCM).
+- `POST /api/ubicaciones` devuelve el `id` de la ubicación.
+- Primer plugin oficial: **Rutas y mapas** (repositorio [gestor-deca-plugins](https://github.com/im7manu/gestor-deca-plugins)).
+
 ## 1.4.0
 
 - **Integraciones**: nueva pestaña Usuarios › Integraciones para crear tokens de solo lectura. Permiten que otra aplicación lea los envíos, empresas, vehículos y conductores, por ejemplo el plugin «Gestor DeCA» de Facturador para facturar los envíos. Cada token se muestra una vez, se guarda solo su hash, queda en la auditoría y se puede revocar al momento.

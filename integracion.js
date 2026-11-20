@@ -10,7 +10,7 @@
 
 const crypto = require('crypto');
 
-function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes }) {
+function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes, extensionesDe = () => [] }) {
   db.exec(`CREATE TABLE IF NOT EXISTS tokens_integracion(
     id INTEGER PRIMARY KEY, nombre TEXT NOT NULL, prefijo TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
     creado TEXT NOT NULL, creado_por TEXT, ultimo_uso TEXT, ultimo_ip TEXT, revocado INTEGER DEFAULT 0
@@ -42,7 +42,7 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes 
   const fechaOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
   function envio(d) {
     const x = normDatos(JSON.parse(d.datos || '{}'));
-    return {
+    const out = {
       id: d.id, numero: num(d), tipo: d.tipo, estado: d.estado || 'emitido', creado: d.creado, modificado: d.modificado || d.creado,
       fecha: x.f_carga || String(d.creado || '').slice(0, 10), mi_papel: x.mi_papel || 'transportista',
       contraparte: { nombre: x.contraparte_nombre || '', nif: x.contraparte_nif || '', direccion: x.contraparte_direccion || '' },
@@ -51,6 +51,11 @@ function crearIntegracion({ db, logAudit, normDatos, num, url, version, ajustes 
       conductor: { nombre: x.conductor_nombre || '', dni: x.conductor_dni || '' }, albaran: x.nalbaran || '',
       observaciones: x.obs || '', pdf: url(d),
     };
+    // Campos que añaden los plugins (p. ej. «ruta» con los km del plugin Rutas)
+    for (const { id, fn } of extensionesDe('integracion.envio')) {
+      try { Object.assign(out, fn({ envio: out, datos: x, doc: d }) || {}); } catch (e) { console.error(`[plugin ${id}] integracion.envio:`, e.message); }
+    }
+    return out;
   }
 
   function rutas(app, adm) {

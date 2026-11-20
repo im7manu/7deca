@@ -1,6 +1,6 @@
 {
   "name": "deca-ecmr",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Gestión DeCA y eCMR creado con <3 por its7manu.",
   "main": "server.js",

@@ -160,12 +160,19 @@ const DECA={paginas:[],_ext:{},cargados:new Set(),
   get state(){return state},get head(){return head},get renderApp(){return renderApp},get fieldHtml(){return fieldHtml},get showFormModal(){return showFormModal},
   get ubicaciones(){return sugLocs}};
 window.DECA=DECA;
+// Tras instalar, activar, configurar o quitar un plugin: se olvida todo lo que registraron los plugins y se vuelven a
+// cargar los activos. Sin esto, cada recarga volvía a añadir sus botones y extensiones (aparecían repetidos).
+async function recargarPluginsUI(){
+  DECA._ext={};DECA.paginas=[];DECA.cargados.clear();
+  document.querySelectorAll('head [data-plugin]').forEach(e=>e.remove());
+  await cargarPluginsUI();
+}
 async function cargarPluginsUI(){
   const lista=await api('/api/plugins/ui').catch(()=>[]);
   await Promise.all(lista.filter(p=>!DECA.cargados.has(p.id)).map(async p=>{
     DECA.cargados.add(p.id);
-    p.estilos.forEach(h=>{const l=document.createElement('link');l.rel='stylesheet';l.href=h;document.head.appendChild(l);});
-    for(const src of p.scripts)await new Promise(ok=>{const sc=document.createElement('script');sc.src=src;sc.onload=ok;sc.onerror=()=>{console.error('No se pudo cargar',src);ok();};document.head.appendChild(sc);});
+    p.estilos.forEach(h=>{const l=document.createElement('link');l.rel='stylesheet';l.href=h;l.dataset.plugin=p.id;document.head.appendChild(l);});
+    for(const src of p.scripts)await new Promise(ok=>{const sc=document.createElement('script');sc.src=src;sc.dataset.plugin=p.id;sc.onload=ok;sc.onerror=()=>{console.error('No se pudo cargar',src);ok();};document.head.appendChild(sc);});
   }));
 }
 const navItems=()=>[{id:'inicio',label:'Inicio',icon:'grid',show:true},{id:'envios',label:'Envíos',icon:'truck',show:canDocs()||state.user?.asignados>0},{id:'empresas',label:'Empresas',icon:'building',show:perm('empresas')},{id:'transporte',label:'Medios de transporte',icon:'car',show:perm('transporte')},{id:'mercancias',label:'Mercancías',icon:'package',show:perm('mercancias')},{id:'ubicaciones',label:'Ubicaciones frecuentes',icon:'pin',show:perm('ubicaciones')},{id:'usuarios',label:'Usuarios',icon:'users',show:state.user?.rol==='admin'},...DECA.paginas.filter(p=>{try{return p.show?p.show():true}catch{return false}}).map(p=>({id:p.id,label:p.label,icon:p.icon||'puzzle',show:true})),{id:'plugins',label:'Plugins',icon:'puzzle',show:state.user?.rol==='admin'},{id:'entidad',label:'Mi entidad',icon:'settings',show:perm('empresa')},{id:'cuenta',label:'Mi cuenta',icon:'user',show:true}].filter(x=>x.show);
@@ -848,7 +855,7 @@ async function pagePlugins(){
     <h2 class="section-title">Instalados</h2><div class="tile-grid">${st.instalados.map(tarjeta).join('')||'<div class="card empty" style="grid-column:1/-1">No hay plugins instalados.</div>'}</div>
     <h2 class="section-title" style="margin-top:22px">Disponibles</h2>${reg.error?`<div class="card empty">No se pudo leer el registro de plugins: ${esc(reg.error)}</div>`:`<div class="tile-grid">${disponibles.map(p=>`<div class="tile-btn"><div class="tile-top"><div class="tile-icon">${I('puzzle')}</div><div class="tile-main"><div class="tile-title">${esc(p.nombre)}</div><div class="tile-sub">${esc(p.descripcion||'')}</div></div></div><div class="tile-meta"><span>Versión ${esc(p.version)}</span><span>${esc(p.autor||'')}</span></div><div class="actions mt4"><button class="btn-primary btn-small" data-inst="${esc(p.id)}">${I('plus')} Instalar</button></div></div>`).join('')||'<div class="card empty" style="grid-column:1/-1">Ya tienes instalados todos los plugins del registro.</div>'}</div>`}
     <div class="card mt4"><strong>Instalar desde un archivo</strong><div class="small muted" style="margin:6px 0 10px">Para probar un plugin propio o instalar sin conexión (paquete .tar.gz).</div><input type="file" id="plArchivo" accept=".gz,.tgz,application/gzip"></div>`;
-  const tras=async(fn,ok)=>{try{const r=await fn();toast(r?.aviso||ok);DECA.cargados.clear();await cargarPluginsUI();await renderApp();}catch(e){toast(e.message,true);}};
+  const tras=async(fn,ok)=>{try{const r=await fn();toast(r?.aviso||ok);await recargarPluginsUI();await renderApp();}catch(e){toast(e.message,true);}};
   v.querySelectorAll('[data-inst]').forEach(b=>b.onclick=()=>{b.disabled=true;tras(()=>api(`/api/plugins/${b.dataset.inst}/instalar`,{method:'POST',body:{}}),'Plugin instalado');});
   v.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>tras(()=>api(`/api/plugins/${b.dataset.act}/activo`,{method:'POST',body:{activo:b.dataset.v==='1'}}),b.dataset.v==='1'?'Plugin activado':'Plugin desactivado'));
   v.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{if(confirm('¿Desinstalar el plugin? Sus datos se conservan por si lo vuelves a instalar.'))tras(()=>api(`/api/plugins/${b.dataset.del}`,{method:'DELETE'}),'Plugin desinstalado');});

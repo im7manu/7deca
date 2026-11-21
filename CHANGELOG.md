@@ -1,5 +1,9 @@
 # Cambios
 
+## 1.5.2
+
+- Corregido: tras instalar, activar o configurar un plugin, sus botones aparecían repetidos en el detalle del envío (y sus extensiones se ejecutaban varias veces) hasta recargar la página.
+
 ## 1.5.1
 
 - Corregido: el paquete de la 1.5.0 no incluía `plugins.js` y no arrancaba (las instalaciones volvían solas a la versión anterior). Ahora el paquete se comprueba arrancándolo antes de firmarlo.
